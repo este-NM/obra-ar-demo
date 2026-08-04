@@ -5,29 +5,51 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <meta name="theme-color" content="#000000" />
   <title>Obra AR — reconocimiento del print</title>
+
+  <script>
+    window.addEventListener('error', (event) => {
+      const box = document.querySelector('#error');
+      const status = document.querySelector('#status');
+      if (status) status.textContent = 'Se produjo un error al cargar la experiencia.';
+      if (box) {
+        box.textContent = event.message || 'Error de carga no identificado.';
+        box.style.display = 'block';
+      }
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      const box = document.querySelector('#error');
+      const status = document.querySelector('#status');
+      if (status) status.textContent = 'No se pudo iniciar la experiencia.';
+      if (box) {
+        box.textContent = event.reason?.message || String(event.reason || 'Error no identificado.');
+        box.style.display = 'block';
+      }
+    });
+  </script>
+
   <script type="importmap">
   {
     "imports": {
       "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "mindar-image": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
       "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
     }
   }
   </script>
+
   <style>
     html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     #ar-container { position: fixed; inset: 0; overflow: hidden; background: #000; }
     #ui { position: fixed; inset: 0; z-index: 20; pointer-events: none; color: #fff5df; }
-    #card { position: absolute; left: 14px; right: 14px; top: 14px; max-width: 430px; padding: 12px 14px; border-radius: 15px; background: rgba(0,0,0,.48); border: 1px solid rgba(255,210,125,.22); backdrop-filter: blur(10px); box-sizing: border-box; pointer-events: auto; }
-    #title { font-size: 14px; font-weight: 650; color: #ffd27a; margin-bottom: 5px; }
-    #status { font-size: 12px; line-height: 1.4; opacity: .9; }
-    #progress-wrap { height: 3px; margin-top: 9px; background: rgba(255,255,255,.12); border-radius: 99px; overflow: hidden; }
-    #progress { height: 100%; width: 0%; background: linear-gradient(90deg,#a97820,#ffe0a0); transition: width .15s linear; }
-    #start { margin-top: 10px; padding: 10px 14px; border-radius: 999px; border: 1px solid rgba(255,220,160,.26); background: rgba(255,205,110,.14); color: #fff4da; font-size: 13px; display: none; }
+    #card { position: absolute; left: 14px; right: 14px; top: 14px; max-width: 450px; padding: 12px 14px; border-radius: 15px; background: rgba(0,0,0,.52); border: 1px solid rgba(255,210,125,.22); backdrop-filter: blur(10px); box-sizing: border-box; pointer-events: auto; }
+    #title { font-size: 15px; font-weight: 650; color: #ffd27a; margin-bottom: 5px; }
+    #status { font-size: 13px; line-height: 1.4; opacity: .93; }
+    #start { margin-top: 10px; padding: 11px 15px; border-radius: 999px; border: 1px solid rgba(255,220,160,.28); background: rgba(255,205,110,.16); color: #fff4da; font-size: 14px; display: none; }
     #start:disabled { opacity: .5; }
-    #hint { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 9px 12px; border-radius: 999px; background: rgba(0,0,0,.44); border: 1px solid rgba(255,220,160,.15); font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity .45s; }
+    #hint { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 9px 12px; border-radius: 999px; background: rgba(0,0,0,.46); border: 1px solid rgba(255,220,160,.15); font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity .45s; }
     #hint.show { opacity: 1; }
-    #error { margin-top: 8px; color: #ffc5a8; font-size: 12px; display: none; }
+    #error { margin-top: 8px; color: #ffc5a8; font-size: 12px; line-height: 1.35; display: none; }
+    #details { margin-top: 7px; font-size: 11px; opacity: .68; line-height: 1.35; }
     @media (max-width: 520px) { #card { max-width: none; } }
   </style>
 </head>
@@ -36,41 +58,35 @@
   <div id="ui">
     <div id="card">
       <div id="title">Obra AR — reconocimiento automático</div>
-      <div id="status">Preparando el reconocimiento de esta obra…</div>
-      <div id="progress-wrap"><div id="progress"></div></div>
+      <div id="status">Comprobando los archivos de reconocimiento…</div>
       <button id="start">Activar cámara</button>
       <div id="error"></div>
+      <div id="details">El efecto sólo aparece cuando la cámara reconoce el print.</div>
     </div>
-    <div id="hint">Buscá el print completo dentro del encuadre</div>
+    <div id="hint">Encuadrá el print completo y mantené el celular estable</div>
   </div>
 
   <script type="module">
     import * as THREE from 'three';
-    import { Compiler } from 'mindar-image';
     import { MindARThree } from 'mindar-image-three';
 
-    const TARGET_VERSION = 'obra-a3-gold-v1';
-    const TARGET_HEIGHT = 0.706380208;
+    const TARGET_HEIGHT = 28.6 / 40.5;
     const statusEl = document.querySelector('#status');
-    const progressEl = document.querySelector('#progress');
-    const progressWrap = document.querySelector('#progress-wrap');
     const startBtn = document.querySelector('#start');
     const errorEl = document.querySelector('#error');
     const hintEl = document.querySelector('#hint');
     const container = document.querySelector('#ar-container');
 
-    let mindarThree = null;
-    let anchor = null;
-    let renderer = null;
-    let scene = null;
-    let camera = null;
+    let mindarThree;
+    let renderer;
+    let scene;
+    let camera;
     let found = false;
     let foundAt = 0;
-    let currentBlobUrl = null;
-    let clickUv = new THREE.Vector2(0.5, 0.5);
     let clickAt = -1000;
-    let traceMaterial = null;
-    let glowMaterial = null;
+    const clickUv = new THREE.Vector2(0.5, 0.5);
+    let traceMaterial;
+    let glowMaterial;
 
     const vertexShader = `
       varying vec2 vUv;
@@ -104,101 +120,35 @@
         centered.x *= 1.415668203;
         float radial = length(centered);
 
-        // Al reconocer el print, la aparición comienza en el eje central y se abre hacia afuera.
-        float opening = clamp(uSinceFound * 0.22, 0.0, 1.0);
-        float frontRadius = opening * 0.92;
-        float centralFront = gaussian(radial - frontRadius, 0.040 + 0.012*sin(uTime*1.3));
-        float opened = 1.0 - smoothstep(frontRadius - 0.03, frontRadius + 0.06, radial);
-        float core = exp(-radial * 9.5) * (0.72 + 0.28*sin(uTime*2.4));
+        float opening = clamp(uSinceFound * 0.24, 0.0, 1.0);
+        float frontRadius = opening * 0.94;
+        float centralFront = gaussian(radial - frontRadius, 0.042 + 0.012*sin(uTime*1.3));
+        float opened = 1.0 - smoothstep(frontRadius - 0.035, frontRadius + 0.07, radial);
+        float core = exp(-radial * 9.2) * (0.72 + 0.28*sin(uTime*2.35));
 
-        // Pulsación continua sobre las trazas ya activadas.
-        float circuit = 0.5 + 0.5*sin(uTime*3.1 - radial*30.0 + vUv.y*8.0);
+        float circuit = 0.5 + 0.5*sin(uTime*3.0 - radial*31.0 + vUv.y*8.5);
         circuit = pow(circuit, 4.0);
-        float breathing = 0.74 + 0.26*sin(uTime*1.15);
+        float breathing = 0.76 + 0.24*sin(uTime*1.12);
 
-        // Toque: una irradiación que sólo se vuelve visible donde hay traza.
         vec2 clickDelta = vUv - uClickUv;
         clickDelta.x *= 1.415668203;
         float clickDist = length(clickDelta);
         float clickP = clamp(uSinceClick / 2.25, 0.0, 1.0);
-        float clickRadius = clickP * 1.15;
+        float clickRadius = clickP * 1.16;
         float clickRing = gaussian(clickDist - clickRadius, 0.032 + 0.018*(1.0-clickP));
         clickRing *= (1.0 - clickP);
 
-        float energy = uBaseGain * (0.12 + opened*0.34 + core*0.86 + centralFront*1.25);
-        energy += circuit * opened * breathing * 0.52;
-        energy += clickRing * 2.1;
+        float energy = uBaseGain * (0.10 + opened*0.35 + core*0.88 + centralFront*1.28);
+        energy += circuit * opened * breathing * 0.58;
+        energy += clickRing * 2.2;
         energy *= uFound;
 
-        vec3 warm = tex.rgb * vec3(1.10, 1.04, 0.92);
+        vec3 warm = tex.rgb * vec3(1.12, 1.05, 0.92);
         vec3 color = warm * (1.0 + energy*uGlowGain);
-        float alpha = tex.a * clamp(energy, 0.0, 1.65);
+        float alpha = tex.a * clamp(energy, 0.0, 1.72);
         gl_FragColor = vec4(color, alpha);
       }
     `;
-
-    function openDB() {
-      return new Promise((resolve, reject) => {
-        const request = indexedDB.open('obra-ar-cache', 1);
-        request.onupgradeneeded = () => request.result.createObjectStore('targets');
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-      });
-    }
-
-    async function cacheGet(key) {
-      try {
-        const db = await openDB();
-        return await new Promise((resolve, reject) => {
-          const tx = db.transaction('targets', 'readonly');
-          const req = tx.objectStore('targets').get(key);
-          req.onsuccess = () => resolve(req.result || null);
-          req.onerror = () => reject(req.error);
-        });
-      } catch (_) { return null; }
-    }
-
-    async function cacheSet(key, value) {
-      try {
-        const db = await openDB();
-        await new Promise((resolve, reject) => {
-          const tx = db.transaction('targets', 'readwrite');
-          tx.objectStore('targets').put(value, key);
-          tx.oncomplete = resolve;
-          tx.onerror = () => reject(tx.error);
-        });
-      } catch (_) {}
-    }
-
-    async function loadImage(url) {
-      const image = new Image();
-      image.src = url;
-      await image.decode();
-      return image;
-    }
-
-    async function prepareTarget() {
-      let buffer = await cacheGet(TARGET_VERSION);
-      if (buffer) {
-        statusEl.textContent = 'Reconocimiento preparado. Podés activar la cámara.';
-        progressEl.style.width = '100%';
-        return buffer;
-      }
-
-      statusEl.textContent = 'Analizando la obra por primera vez… Esto puede tardar unos segundos.';
-      const image = await loadImage('./target.jpg');
-      const compiler = new Compiler();
-      await compiler.compileImageTargets([image], (progress) => {
-        const p = Math.max(1, Math.min(100, progress));
-        progressEl.style.width = p.toFixed(1) + '%';
-        statusEl.textContent = 'Preparando reconocimiento: ' + Math.round(p) + '%';
-      });
-      buffer = await compiler.exportData();
-      await cacheSet(TARGET_VERSION, buffer);
-      progressEl.style.width = '100%';
-      statusEl.textContent = 'Reconocimiento preparado. Podés activar la cámara.';
-      return buffer;
-    }
 
     function makeMaterial(texture, glowGain, baseGain) {
       return new THREE.ShaderMaterial({
@@ -222,36 +172,47 @@
       });
     }
 
-    async function setupAR(targetBuffer) {
-      const blob = new Blob([targetBuffer], { type: 'application/octet-stream' });
-      currentBlobUrl = URL.createObjectURL(blob);
+    async function verifyRequiredFiles() {
+      const required = ['./targets.mind', './traces.png', './glow.png'];
+      for (const url of required) {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`Falta ${url.replace('./','')} en la raíz del repositorio.`);
+        }
+      }
+    }
 
+    async function setupAR() {
       mindarThree = new MindARThree({
         container,
-        imageTargetSrc: currentBlobUrl,
+        imageTargetSrc: './targets.mind',
         filterMinCF: 0.001,
         filterBeta: 0.01,
         missTolerance: 7,
-        warmupTolerance: 5
+        warmupTolerance: 5,
+        uiLoading: 'no',
+        uiScanning: 'no',
+        uiError: 'no'
       });
 
       ({ renderer, scene, camera } = mindarThree);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-      anchor = mindarThree.addAnchor(0);
+      const anchor = mindarThree.addAnchor(0);
       const loader = new THREE.TextureLoader();
       const [traceTex, glowTex] = await Promise.all([
         loader.loadAsync('./traces.png'),
         loader.loadAsync('./glow.png')
       ]);
+
       traceTex.colorSpace = THREE.SRGBColorSpace;
       glowTex.colorSpace = THREE.SRGBColorSpace;
       traceTex.minFilter = THREE.LinearFilter;
       glowTex.minFilter = THREE.LinearFilter;
 
-      traceMaterial = makeMaterial(traceTex, 1.35, 1.0);
-      glowMaterial = makeMaterial(glowTex, 1.65, 0.72);
+      traceMaterial = makeMaterial(traceTex, 1.42, 1.0);
+      glowMaterial = makeMaterial(glowTex, 1.72, 0.74);
 
       const geometry = new THREE.PlaneGeometry(1, TARGET_HEIGHT);
       const glowPlane = new THREE.Mesh(geometry, glowMaterial);
@@ -259,6 +220,7 @@
       glowPlane.scale.set(1.012, 1.012, 1);
       const tracePlane = new THREE.Mesh(geometry, traceMaterial);
       tracePlane.position.z = 0.011;
+
       anchor.group.add(glowPlane);
       anchor.group.add(tracePlane);
 
@@ -268,18 +230,25 @@
         statusEl.textContent = 'Obra reconocida — activación desde la centralidad.';
         hintEl.classList.remove('show');
       };
+
       anchor.onTargetLost = () => {
         found = false;
-        statusEl.textContent = 'Print fuera de seguimiento. Volvé a encuadrarlo completo.';
+        statusEl.textContent = 'Se perdió el seguimiento. Volvé a encuadrar el print.';
         hintEl.classList.add('show');
       };
 
       const raycaster = new THREE.Raycaster();
       const pointer = new THREE.Vector2();
-      let downX = 0, downY = 0, downAt = 0;
+      let downX = 0;
+      let downY = 0;
+      let downAt = 0;
+
       container.addEventListener('pointerdown', (event) => {
-        downX = event.clientX; downY = event.clientY; downAt = performance.now();
+        downX = event.clientX;
+        downY = event.clientY;
+        downAt = performance.now();
       });
+
       container.addEventListener('pointerup', (event) => {
         if (!found || performance.now() - downAt > 420 || Math.hypot(event.clientX-downX, event.clientY-downY) > 18) return;
         pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -289,23 +258,22 @@
         if (hits.length && hits[0].uv) {
           clickUv.copy(hits[0].uv);
           clickAt = performance.now() * 0.001;
-          for (const material of [traceMaterial, glowMaterial]) {
-            material.uniforms.uClickUv.value.copy(clickUv);
-          }
+          traceMaterial.uniforms.uClickUv.value.copy(clickUv);
+          glowMaterial.uniforms.uClickUv.value.copy(clickUv);
         }
       });
     }
 
     async function initialize() {
       try {
-        if (!window.isSecureContext) throw new Error('La cámara requiere abrir el sitio mediante HTTPS.');
-        const buffer = await prepareTarget();
-        await setupAR(buffer);
-        progressWrap.style.display = 'none';
+        if (!window.isSecureContext) throw new Error('La cámara requiere una página HTTPS.');
+        await verifyRequiredFiles();
+        await setupAR();
+        statusEl.textContent = 'Todo listo. Activá la cámara y apuntá al print completo.';
         startBtn.style.display = 'inline-block';
       } catch (error) {
         console.error(error);
-        statusEl.textContent = 'No se pudo preparar el reconocimiento.';
+        statusEl.textContent = 'La experiencia todavía no está lista.';
         errorEl.textContent = error?.message || String(error);
         errorEl.style.display = 'block';
       }
@@ -318,16 +286,18 @@
         await mindarThree.start();
         startBtn.style.display = 'none';
         hintEl.classList.add('show');
-        statusEl.textContent = 'Apuntá al print completo. El efecto sólo aparecerá al reconocerlo.';
+        statusEl.textContent = 'Apuntá al print completo. El efecto aparecerá sólo al reconocerlo.';
+
         renderer.setAnimationLoop(() => {
           const now = performance.now() * 0.001;
           const sinceFound = found ? Math.max(0, now - foundAt) : 0;
           const sinceClick = Math.max(0, now - clickAt);
-          const foundMix = found ? 1 : 0;
+          const targetFound = found ? 1 : 0;
+
           for (const material of [traceMaterial, glowMaterial]) {
             material.uniforms.uTime.value = now;
             material.uniforms.uSinceFound.value = sinceFound;
-            material.uniforms.uFound.value += (foundMix - material.uniforms.uFound.value) * 0.12;
+            material.uniforms.uFound.value += (targetFound - material.uniforms.uFound.value) * 0.12;
             material.uniforms.uSinceClick.value = sinceClick;
           }
           renderer.render(scene, camera);
@@ -336,7 +306,7 @@
         console.error(error);
         startBtn.disabled = false;
         statusEl.textContent = 'No se pudo iniciar la cámara.';
-        errorEl.textContent = 'Abrí el enlace de GitHub Pages en Safari/Chrome y aceptá el permiso de cámara.';
+        errorEl.textContent = error?.message || 'Revisá el permiso de cámara en Safari y recargá la página.';
         errorEl.style.display = 'block';
       }
     });
