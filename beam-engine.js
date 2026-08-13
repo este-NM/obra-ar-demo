@@ -67,7 +67,7 @@
         let score = d2;
         if(referenceS!==null){
           const ds = Math.abs(cdelta(referenceS, i/this.N));
-          score += Math.max(0, ds - 0.032) * 0.008;
+          score += Math.max(0, ds - 0.045) * 0.006;
         }
         if(score < bestScore){ bestScore = score; best = i; bestD2 = d2; }
       }
@@ -107,10 +107,13 @@
       this.veinLitCtx = this.veinLit.getContext('2d');
 
       this.baseSpeed = opts.baseSpeed || 0.28;
-      this.reacquireDelay = opts.reacquireDelay || 0.9;
-      this.captureRadius = opts.captureRadius || 0.145;
+      this.reacquireDelay = opts.reacquireDelay || 0.95;
+      this.captureRadius = opts.captureRadius || 0.19;     // easier pickup
+      this.releaseRadius = opts.releaseRadius || 0.255;   // easier retention
+      this.inputHold = opts.inputHold || 0.42;            // grace period before dropping
       this.activity = 0;
       this.inputStrength = 0;
+      this.lastGoodS = null;
     }
 
     _resizeVeinBuffers(){
@@ -138,8 +141,6 @@
       x.drawImage(im,0,0);
       this.channelData = x.getImageData(0,0,c.width,c.height).data;
       this.channelW = c.width; this.channelH = c.height; this.channelReady = true;
-
-      // Optional actual-art trace texture. If present, this is what lights up.
       try{
         this.veinsImage = await this._loadImage('veins.png');
         this.veinsReady = true;
@@ -160,30 +161,46 @@
     }
 
     setCentrality(nx,ny,time){
-      if(!this.inChannel(nx,ny)){
-        this.targetS = null; this.inputStrength = 0; return false;
+      const inside = this.inChannel(nx,ny);
+      const n = inside ? this.path.nearest(nx,ny,this.headS) : null;
+      if(!inside || !n || n.dist > this.releaseRadius){
+        // don't lose the coupling instantly; keep the last target alive briefly.
+        return false;
       }
-      const n = this.path.nearest(nx,ny,this.headS);
-      if(n.dist > this.captureRadius){
-        this.targetS = null; this.inputStrength = 0; return false;
-      }
-      this.inputStrength = smoothstep(1 - n.dist / this.captureRadius);
+
+      const influence = smoothstep(1 - clamp(n.dist / this.captureRadius, 0, 1));
+      const softInfluence = influence > 0 ? influence : 0.14;
+      this.inputStrength = Math.max(this.inputStrength * 0.72, softInfluence);
+
       if(this.headS === null || time - this.lastInputTime > this.reacquireDelay){
-        this.headS = n.s; this.targetS = n.s; this.history = [];
+        this.headS = n.s;
+        this.targetS = n.s;
+        this.history = [];
       } else {
         const ds = Math.abs(cdelta(this.headS, n.s));
-        if(ds < 0.20) this.targetS = n.s;
+        if(ds < 0.30){
+          // softly blend rather than snapping, so the path clings better.
+          const d = cdelta(this.headS, n.s);
+          this.targetS = wrap(this.headS + d * 0.92);
+        }
       }
+      this.lastGoodS = n.s;
       this.lastInputTime = time;
       return true;
     }
 
-    clearCentrality(){ this.targetS = null; this.inputStrength = 0; }
+    clearCentrality(){
+      // soft release: hold the last target briefly instead of cutting.
+      if(this.headS !== null){
+        this.targetS = this.targetS ?? this.headS;
+      }
+      this.inputStrength *= 0.92;
+    }
 
     tapAt(nx,ny,time){
       if(!this.inChannel(nx,ny)) return;
       const n = this.path.nearest(nx,ny,this.headS);
-      if(n.dist < 0.15){
+      if(n.dist < 0.18){
         this.propagations.push({ s:n.s, t0:time, seed:Math.random() });
         if(this.propagations.length > 8) this.propagations.shift();
       }
@@ -194,37 +211,43 @@
       const dt = clamp(time - this.lastT, 0, 0.05);
       this.lastT = time;
 
-      // keep offscreen buffers synchronized if host canvas is resized
       if(this.veinBase.width !== this.w || this.veinBase.height !== this.h) this._resizeVeinBuffers();
 
-      const hasInput = this.targetS !== null;
-      const activityTarget = hasInput ? (0.38 + 0.62 * this.inputStrength) : 0;
-      this.activity = mix(this.activity, activityTarget, hasInput ? 0.15 : 0.07);
+      const inputAge = time - this.lastInputTime;
+      const hasInput = inputAge <= this.inputHold && this.targetS !== null;
+      const activityTarget = hasInput ? (0.40 + 0.60 * this.inputStrength) : Math.min(0.18, this.activity);
+      this.activity = mix(this.activity, activityTarget, hasInput ? 0.15 : 0.05);
 
-      if(this.headS !== null && this.targetS !== null){
-        const d = cdelta(this.headS, this.targetS);
+      if(!hasInput && inputAge > this.inputHold){
+        this.targetS = null;
+        this.inputStrength *= 0.96;
+      }
+
+      if(this.headS !== null && (this.targetS !== null || this.lastGoodS !== null)){
+        const aim = this.targetS ?? this.lastGoodS;
+        const d = cdelta(this.headS, aim);
         if(Math.abs(d) > 0.00005){
           this.direction = d >= 0 ? 1 : -1;
-          const localSpeed = this.baseSpeed * speedProfile(this.headS) * mix(0.78, 1.12, this.inputStrength);
+          const localSpeed = this.baseSpeed * speedProfile(this.headS) * mix(0.76, 1.10, Math.max(this.inputStrength, 0.22));
           const vmax = localSpeed * dt;
           const step = Math.sign(d) * Math.min(Math.abs(d), vmax);
           this.headS = wrap(this.headS + step);
           this.velS = Math.abs(step) / Math.max(dt, 1e-5);
         } else {
-          this.velS *= 0.86;
+          this.velS *= 0.90;
         }
         this.history.push({
           s: this.headS,
           t: time,
-          energy: mix(0.6, 1.0, this.inputStrength),
+          energy: mix(0.56, 1.0, Math.max(this.inputStrength, 0.2)),
           speed: this.velS
         });
       } else {
-        this.velS *= 0.90;
+        this.velS *= 0.92;
       }
 
-      this.history = this.history.filter(h => time - h.t < 1.55);
-      this.propagations = this.propagations.filter(p => time - p.t0 < 2.5);
+      this.history = this.history.filter(h => time - h.t < 1.7);
+      this.propagations = this.propagations.filter(p => time - p.t0 < 2.8);
       this.render(time);
     }
 
@@ -240,6 +263,21 @@
       ctx.restore();
     }
 
+    _veinPulseNode(ctx, x, y, angle, rx, ry, a){
+      ctx.save();
+      ctx.translate(x,y); ctx.rotate(angle);
+      const g = ctx.createRadialGradient(0,0,0,0,0,Math.max(rx,ry));
+      g.addColorStop(0, `rgba(255,255,255,${0.95*a})`);
+      g.addColorStop(0.28, `rgba(255,255,255,${0.56*a})`);
+      g.addColorStop(0.65, `rgba(255,255,255,${0.22*a})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(0,0,rx,ry,0,0,TAU);
+      ctx.fill();
+      ctx.restore();
+    }
+
     _buildVeinIllumination(time){
       if(!this.veinsReady) return;
       const w=this.w,h=this.h;
@@ -248,47 +286,53 @@
       m.save();
       m.globalCompositeOperation='lighter';
 
-      // The vector only drives an invisible moving activation field.
-      // The visible content comes from veins.png (actual artwork traces).
+      // invisible activation field coupled to the vector, visible content comes from the artwork traces.
       for(const q of this.history){
         const age=time-q.t;
-        const life=clamp(1-age/1.55,0,1);
+        const life=clamp(1-age/1.7,0,1);
         if(life<=0) continue;
         const [px,py]=this.path.pointAt(q.s);
         const [tx,ty]=this.path.tangentAt(q.s);
         const x=px*w,y=py*h,ang=Math.atan2(ty,tx);
         const occ=occlusionFactor(q.s);
-        const stretch=clamp(0.85+q.speed*0.55,0.9,1.6);
+        const stretch=clamp(0.88+q.speed*0.52,0.9,1.55);
         const a=life*q.energy*this.activity*occ;
-
-        m.save();
-        m.translate(x,y); m.rotate(ang);
-        const rx=52*stretch*(0.72+0.32*life), ry=35*(0.72+0.28*life);
-        const g=m.createRadialGradient(0,0,0,0,0,Math.max(rx,ry));
-        g.addColorStop(0,`rgba(255,255,255,${0.52*a})`);
-        g.addColorStop(0.45,`rgba(255,255,255,${0.30*a})`);
-        g.addColorStop(1,'rgba(255,255,255,0)');
-        m.fillStyle=g;
-        m.beginPath();m.ellipse(0,0,rx,ry,0,0,TAU);m.fill();
-        m.restore();
+        this._veinPulseNode(m, x, y, ang, 54*stretch*(0.72+0.28*life), 36*(0.72+0.26*life), 0.44*a);
       }
 
-      // current focus gets a slightly stronger, broader activation but still no visible geometric beam
       if(this.headS!==null && this.history.length){
         const [px,py]=this.path.pointAt(this.headS);
         const [tx,ty]=this.path.tangentAt(this.headS);
         const x=px*w,y=py*h,ang=Math.atan2(ty,tx);
         const occ=occlusionFactor(this.headS);
         const pulse=0.86+0.14*Math.sin(time*8.4);
-        m.save();m.translate(x,y);m.rotate(ang);
-        const rx=72*(0.95+0.18*clamp(this.velS,0,1.4)), ry=43*pulse;
-        const g=m.createRadialGradient(0,0,0,0,0,Math.max(rx,ry));
-        g.addColorStop(0,`rgba(255,255,255,${0.82*occ*(0.75+0.25*this.activity)})`);
-        g.addColorStop(0.50,`rgba(255,255,255,${0.38*occ})`);
-        g.addColorStop(1,'rgba(255,255,255,0)');
-        m.fillStyle=g;m.beginPath();m.ellipse(0,0,rx,ry,0,0,TAU);m.fill();
-        m.restore();
+        const stretch=clamp(1.0+this.velS*0.55,1.0,1.7);
+        this._veinPulseNode(m, x, y, ang, 76*stretch, 45*pulse, 0.62*occ*(0.76+0.24*this.activity));
       }
+
+      // Click/tap propagation: now also vein-coupled instead of a separate generic overlay.
+      for(const pr of this.propagations){
+        const age = time - pr.t0;
+        const life = clamp(1 - age/2.8, 0, 1);
+        const travel = 0.34 * age;
+        for(const dir of [-1,1]){
+          const front = wrap(pr.s + dir * travel);
+          for(let k=0; k<34; k++){
+            const fall = 1 - k/34;
+            const ss = wrap(front - dir * k * 0.0029);
+            const [px,py] = this.path.pointAt(ss);
+            const [tx,ty] = this.path.tangentAt(ss);
+            const x = px*w, y = py*h;
+            const ang = Math.atan2(ty, tx);
+            const occ = occlusionFactor(ss);
+            const frontWeight = k < 5 ? 1.0 : 0.58;
+            const a = fall * life * occ * frontWeight * 0.75;
+            const stretch = 1.15 + 0.25*fall;
+            this._veinPulseNode(m, x, y, ang, (k<5?44:30)*stretch, (k<5?22:16), a);
+          }
+        }
+      }
+
       m.restore();
 
       const l=this.veinLitCtx;
@@ -304,58 +348,30 @@
       const ctx = this.ctx, w = this.w, h = this.h;
       ctx.clearRect(0,0,w,h);
 
-      // Main motion: illuminate actual artwork traces as vein-like networks.
       this._buildVeinIllumination(time);
       if(this.veinsReady){
         ctx.save();
         ctx.globalCompositeOperation='screen';
-        ctx.globalAlpha=0.72;
-        ctx.filter='blur(12px)';
+        ctx.globalAlpha=0.70;
+        ctx.filter='blur(13px)';
         ctx.drawImage(this.veinLit,0,0,w,h);
-        ctx.filter='blur(4px)';
-        ctx.globalAlpha=0.58;
+        ctx.filter='blur(5px)';
+        ctx.globalAlpha=0.60;
         ctx.drawImage(this.veinLit,0,0,w,h);
         ctx.filter='none';
-        ctx.globalAlpha=0.92;
+        ctx.globalAlpha=0.96;
         ctx.drawImage(this.veinLit,0,0,w,h);
         ctx.restore();
       } else {
-        // fallback only if veins.png wasn't uploaded
         ctx.save();ctx.globalCompositeOperation='screen';
         for(const q of this.history){
-          const age=time-q.t,life=clamp(1-age/1.55,0,1);
+          const age=time-q.t,life=clamp(1-age/1.7,0,1);
           const [px,py]=this.path.pointAt(q.s),[tx,ty]=this.path.tangentAt(q.s);
           const occ=occlusionFactor(q.s);
           this.drawSoftNode(ctx,px*w,py*h,16,6,Math.atan2(ty,tx),'rgba(255,244,224,1)',life*occ*0.12);
         }
         ctx.restore();
       }
-
-      // CLICK EFFECT — intentionally preserved from V3 unchanged.
-      ctx.save();
-      ctx.globalCompositeOperation = 'screen';
-      for(const pr of this.propagations){
-        const age = time - pr.t0;
-        const life = clamp(1 - age/2.5, 0, 1);
-        const travel = 0.35 * age;
-        for(const dir of [-1,1]){
-          const front = wrap(pr.s + dir * travel);
-          for(let k=0; k<26; k++){
-            const fall = 1 - k/26;
-            const ss = wrap(front - dir * k * 0.003);
-            const [px,py] = this.path.pointAt(ss);
-            const [tx,ty] = this.path.tangentAt(ss);
-            const x = px*w, y = py*h;
-            const ang = Math.atan2(ty, tx);
-            const occ = occlusionFactor(ss);
-            const alpha = fall * life * occ * (k < 4 ? 0.22 : 0.11);
-            const rx = (k < 4 ? 11 : 7) * (1 + 0.35*fall);
-            const ry = (k < 4 ? 4.2 : 3.4);
-            this.drawSoftNode(ctx, x, y, rx, ry, ang, k < 4 ? 'rgba(255,250,235,1)' : 'rgba(255,236,208,1)', alpha);
-          }
-        }
-      }
-      ctx.restore();
     }
   }
 
