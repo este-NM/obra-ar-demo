@@ -97,6 +97,15 @@
       this.channelW = 0;
       this.channelH = 0;
 
+      this.veinsReady = false;
+      this.veinsImage = null;
+      this.veinBase = document.createElement('canvas');
+      this.veinMask = document.createElement('canvas');
+      this.veinLit = document.createElement('canvas');
+      this.veinBaseCtx = this.veinBase.getContext('2d');
+      this.veinMaskCtx = this.veinMask.getContext('2d');
+      this.veinLitCtx = this.veinLit.getContext('2d');
+
       this.baseSpeed = opts.baseSpeed || 0.28;
       this.reacquireDelay = opts.reacquireDelay || 0.9;
       this.captureRadius = opts.captureRadius || 0.145;
@@ -104,16 +113,41 @@
       this.inputStrength = 0;
     }
 
-    async loadMask(src){
+    _resizeVeinBuffers(){
+      const w = this.w || this.canvas.width;
+      const h = this.h || this.canvas.height;
+      for(const c of [this.veinBase,this.veinMask,this.veinLit]){ c.width=w; c.height=h; }
+      if(this.veinsImage){
+        this.veinBaseCtx.clearRect(0,0,w,h);
+        this.veinBaseCtx.drawImage(this.veinsImage,0,0,w,h);
+      }
+    }
+
+    async _loadImage(src){
       const im = new Image();
       im.src = src;
-      await new Promise((res, rej)=>{ im.onload = res; im.onerror = rej; });
+      await new Promise((res,rej)=>{ im.onload=res; im.onerror=rej; });
+      return im;
+    }
+
+    async loadMask(src){
+      const im = await this._loadImage(src);
       const c = document.createElement('canvas');
       c.width = im.naturalWidth; c.height = im.naturalHeight;
       const x = c.getContext('2d');
       x.drawImage(im,0,0);
       this.channelData = x.getImageData(0,0,c.width,c.height).data;
       this.channelW = c.width; this.channelH = c.height; this.channelReady = true;
+
+      // Optional actual-art trace texture. If present, this is what lights up.
+      try{
+        this.veinsImage = await this._loadImage('veins.png');
+        this.veinsReady = true;
+        this._resizeVeinBuffers();
+      }catch(e){
+        this.veinsReady = false;
+        console.warn('veins.png not found; using fallback glow only.');
+      }
     }
 
     inChannel(nx,ny){
@@ -160,6 +194,9 @@
       const dt = clamp(time - this.lastT, 0, 0.05);
       this.lastT = time;
 
+      // keep offscreen buffers synchronized if host canvas is resized
+      if(this.veinBase.width !== this.w || this.veinBase.height !== this.h) this._resizeVeinBuffers();
+
       const hasInput = this.targetS !== null;
       const activityTarget = hasInput ? (0.38 + 0.62 * this.inputStrength) : 0;
       this.activity = mix(this.activity, activityTarget, hasInput ? 0.15 : 0.07);
@@ -203,58 +240,100 @@
       ctx.restore();
     }
 
+    _buildVeinIllumination(time){
+      if(!this.veinsReady) return;
+      const w=this.w,h=this.h;
+      const m=this.veinMaskCtx;
+      m.clearRect(0,0,w,h);
+      m.save();
+      m.globalCompositeOperation='lighter';
+
+      // The vector only drives an invisible moving activation field.
+      // The visible content comes from veins.png (actual artwork traces).
+      for(const q of this.history){
+        const age=time-q.t;
+        const life=clamp(1-age/1.55,0,1);
+        if(life<=0) continue;
+        const [px,py]=this.path.pointAt(q.s);
+        const [tx,ty]=this.path.tangentAt(q.s);
+        const x=px*w,y=py*h,ang=Math.atan2(ty,tx);
+        const occ=occlusionFactor(q.s);
+        const stretch=clamp(0.85+q.speed*0.55,0.9,1.6);
+        const a=life*q.energy*this.activity*occ;
+
+        m.save();
+        m.translate(x,y); m.rotate(ang);
+        const rx=52*stretch*(0.72+0.32*life), ry=35*(0.72+0.28*life);
+        const g=m.createRadialGradient(0,0,0,0,0,Math.max(rx,ry));
+        g.addColorStop(0,`rgba(255,255,255,${0.52*a})`);
+        g.addColorStop(0.45,`rgba(255,255,255,${0.30*a})`);
+        g.addColorStop(1,'rgba(255,255,255,0)');
+        m.fillStyle=g;
+        m.beginPath();m.ellipse(0,0,rx,ry,0,0,TAU);m.fill();
+        m.restore();
+      }
+
+      // current focus gets a slightly stronger, broader activation but still no visible geometric beam
+      if(this.headS!==null && this.history.length){
+        const [px,py]=this.path.pointAt(this.headS);
+        const [tx,ty]=this.path.tangentAt(this.headS);
+        const x=px*w,y=py*h,ang=Math.atan2(ty,tx);
+        const occ=occlusionFactor(this.headS);
+        const pulse=0.86+0.14*Math.sin(time*8.4);
+        m.save();m.translate(x,y);m.rotate(ang);
+        const rx=72*(0.95+0.18*clamp(this.velS,0,1.4)), ry=43*pulse;
+        const g=m.createRadialGradient(0,0,0,0,0,Math.max(rx,ry));
+        g.addColorStop(0,`rgba(255,255,255,${0.82*occ*(0.75+0.25*this.activity)})`);
+        g.addColorStop(0.50,`rgba(255,255,255,${0.38*occ})`);
+        g.addColorStop(1,'rgba(255,255,255,0)');
+        m.fillStyle=g;m.beginPath();m.ellipse(0,0,rx,ry,0,0,TAU);m.fill();
+        m.restore();
+      }
+      m.restore();
+
+      const l=this.veinLitCtx;
+      l.clearRect(0,0,w,h);
+      l.globalCompositeOperation='source-over';
+      l.drawImage(this.veinBase,0,0,w,h);
+      l.globalCompositeOperation='destination-in';
+      l.drawImage(this.veinMask,0,0,w,h);
+      l.globalCompositeOperation='source-over';
+    }
+
     render(time){
       const ctx = this.ctx, w = this.w, h = this.h;
       ctx.clearRect(0,0,w,h);
 
-      // Organic brightness enhancement over the artwork, not an imposed beam.
+      // Main motion: illuminate actual artwork traces as vein-like networks.
+      this._buildVeinIllumination(time);
+      if(this.veinsReady){
+        ctx.save();
+        ctx.globalCompositeOperation='screen';
+        ctx.globalAlpha=0.72;
+        ctx.filter='blur(12px)';
+        ctx.drawImage(this.veinLit,0,0,w,h);
+        ctx.filter='blur(4px)';
+        ctx.globalAlpha=0.58;
+        ctx.drawImage(this.veinLit,0,0,w,h);
+        ctx.filter='none';
+        ctx.globalAlpha=0.92;
+        ctx.drawImage(this.veinLit,0,0,w,h);
+        ctx.restore();
+      } else {
+        // fallback only if veins.png wasn't uploaded
+        ctx.save();ctx.globalCompositeOperation='screen';
+        for(const q of this.history){
+          const age=time-q.t,life=clamp(1-age/1.55,0,1);
+          const [px,py]=this.path.pointAt(q.s),[tx,ty]=this.path.tangentAt(q.s);
+          const occ=occlusionFactor(q.s);
+          this.drawSoftNode(ctx,px*w,py*h,16,6,Math.atan2(ty,tx),'rgba(255,244,224,1)',life*occ*0.12);
+        }
+        ctx.restore();
+      }
+
+      // CLICK EFFECT — intentionally preserved from V3 unchanged.
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
-
-      // Broad latent glow on recently traversed segments.
-      for(let pass=0; pass<3; pass++){
-        ctx.shadowBlur = pass===0 ? 22 : pass===1 ? 10 : 0;
-        ctx.shadowColor = pass===2 ? 'rgba(255,250,242,0.95)' : 'rgba(255,242,222,0.9)';
-        for(let i=0; i<this.history.length; i++){
-          const q = this.history[i];
-          const age = time - q.t;
-          const life = clamp(1 - age/1.55, 0, 1);
-          if(life <= 0) continue;
-          const [px,py] = this.path.pointAt(q.s);
-          const [tx,ty] = this.path.tangentAt(q.s);
-          const x = px*w, y = py*h;
-          const ang = Math.atan2(ty, tx);
-          const occ = occlusionFactor(q.s);
-          const shimmer = 0.9 + 0.1*Math.sin(time*7.8 - q.s*18.5);
-          const stretch = clamp(0.7 + q.speed * 0.65, 0.75, 1.7);
-          const base = pass===0 ? 16 : pass===1 ? 9 : 4.4;
-          const rx = base * stretch * (0.62 + 0.72*life);
-          const ry = base * (pass===2 ? 0.75 : 1.05) * (0.62 + 0.65*life);
-          const alphaBase = pass===0 ? 0.045 : pass===1 ? 0.10 : 0.20;
-          const alpha = life * q.energy * this.activity * occ * shimmer * alphaBase;
-          const col = pass===2 ? 'rgba(255,250,244,1)' : 'rgba(255,238,214,1)';
-          this.drawSoftNode(ctx,x,y,rx,ry,ang,col,alpha);
-        }
-      }
-
-      // Localized brightening head: subtle leading enhancement instead of a hard beam.
-      if(this.headS !== null && this.history.length){
-        const [px,py] = this.path.pointAt(this.headS);
-        const [tx,ty] = this.path.tangentAt(this.headS);
-        const x = px*w, y = py*h;
-        const ang = Math.atan2(ty, tx);
-        const occ = occlusionFactor(this.headS);
-        const pulse = 0.84 + 0.16*Math.sin(time*9.2);
-        const stretch = clamp(0.9 + this.velS * 0.7, 0.9, 1.8);
-
-        ctx.shadowBlur = 26;
-        ctx.shadowColor = 'rgba(255,246,224,0.95)';
-        this.drawSoftNode(ctx, x, y, 22*stretch, 10.5*pulse, ang, 'rgba(255,244,218,1)', 0.22*occ*(0.78+0.35*this.activity));
-        this.drawSoftNode(ctx, x, y, 11.5*stretch, 4.2, ang, 'rgba(255,252,244,1)', 0.34*occ*(0.85+0.35*this.activity));
-        this.drawSoftNode(ctx, x, y, 4.2, 2.2, ang, 'rgba(255,255,255,1)', 0.42*occ*(0.8+0.25*this.activity));
-      }
-
-      // Tap propagation remains coupled to the same path but as brightening pulses.
       for(const pr of this.propagations){
         const age = time - pr.t0;
         const life = clamp(1 - age/2.5, 0, 1);
@@ -276,7 +355,6 @@
           }
         }
       }
-
       ctx.restore();
     }
   }
