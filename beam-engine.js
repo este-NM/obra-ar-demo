@@ -10,7 +10,6 @@
   const wrap = s => ((s % 1) + 1) % 1;
   const cdelta = (a,b) => { let d = wrap(b-a); if (d > 0.5) d -= 1; return d; };
   const smoothstep = t => { t = clamp(t,0,1); return t*t*(3-2*t); };
-  const easeOut = t => 1 - Math.pow(1-clamp(t,0,1), 2);
 
   const arcProgress = (s,a,b) => {
     s = wrap(s); a = wrap(a); b = wrap(b);
@@ -34,9 +33,7 @@
       const d = Math.abs(cdelta(z.s, s));
       if(d < z.half){
         const q = d / z.half;
-        const core = smoothstep(q);
-        // stronger hide near the middle of the crossing, softer recover at the edges
-        f = Math.min(f, 0.02 + 0.98 * core);
+        f = Math.min(f, 0.03 + 0.97 * smoothstep(q));
       }
     }
     return f;
@@ -56,8 +53,8 @@
       ];
     }
     tangentAt(s){
-      const a = this.pointAt(wrap(s - 1/this.N * 1.35));
-      const b = this.pointAt(wrap(s + 1/this.N * 1.35));
+      const a = this.pointAt(wrap(s - 1/this.N * 1.4));
+      const b = this.pointAt(wrap(s + 1/this.N * 1.4));
       const dx = b[0] - a[0], dy = b[1] - a[1];
       const m = Math.hypot(dx, dy) || 1;
       return [dx/m, dy/m];
@@ -91,7 +88,6 @@
       this.lastT = null;
       this.lastInputTime = -999;
       this.direction = 1;
-      this.prevHeadS = null;
       this.velS = 0;
 
       this.history = [];
@@ -104,7 +100,6 @@
       this.baseSpeed = opts.baseSpeed || 0.28;
       this.reacquireDelay = opts.reacquireDelay || 0.9;
       this.captureRadius = opts.captureRadius || 0.145;
-      this.active = false;
       this.activity = 0;
       this.inputStrength = 0;
     }
@@ -132,38 +127,24 @@
 
     setCentrality(nx,ny,time){
       if(!this.inChannel(nx,ny)){
-        this.targetS = null;
-        this.inputStrength = 0;
-        return false;
+        this.targetS = null; this.inputStrength = 0; return false;
       }
       const n = this.path.nearest(nx,ny,this.headS);
       if(n.dist > this.captureRadius){
-        this.targetS = null;
-        this.inputStrength = 0;
-        return false;
+        this.targetS = null; this.inputStrength = 0; return false;
       }
-
-      // wider invisible sensitivity field: strong in the center of the channel, soft at the edges
-      const influence = smoothstep(1 - n.dist / this.captureRadius);
-      this.inputStrength = influence;
-
+      this.inputStrength = smoothstep(1 - n.dist / this.captureRadius);
       if(this.headS === null || time - this.lastInputTime > this.reacquireDelay){
-        this.headS = n.s;
-        this.targetS = n.s;
-        this.history = [];
+        this.headS = n.s; this.targetS = n.s; this.history = [];
       } else {
         const ds = Math.abs(cdelta(this.headS, n.s));
         if(ds < 0.20) this.targetS = n.s;
       }
       this.lastInputTime = time;
-      this.active = true;
       return true;
     }
 
-    clearCentrality(){
-      this.targetS = null;
-      this.inputStrength = 0;
-    }
+    clearCentrality(){ this.targetS = null; this.inputStrength = 0; }
 
     tapAt(nx,ny,time){
       if(!this.inChannel(nx,ny)) return;
@@ -180,48 +161,42 @@
       this.lastT = time;
 
       const hasInput = this.targetS !== null;
-      const activityTarget = hasInput ? (0.35 + 0.65 * this.inputStrength) : 0;
-      this.activity = mix(this.activity, activityTarget, hasInput ? 0.16 : 0.08);
+      const activityTarget = hasInput ? (0.38 + 0.62 * this.inputStrength) : 0;
+      this.activity = mix(this.activity, activityTarget, hasInput ? 0.15 : 0.07);
 
       if(this.headS !== null && this.targetS !== null){
         const d = cdelta(this.headS, this.targetS);
         if(Math.abs(d) > 0.00005){
           this.direction = d >= 0 ? 1 : -1;
-          const localSpeed = this.baseSpeed * speedProfile(this.headS) * mix(0.75, 1.15, this.inputStrength);
+          const localSpeed = this.baseSpeed * speedProfile(this.headS) * mix(0.78, 1.12, this.inputStrength);
           const vmax = localSpeed * dt;
           const step = Math.sign(d) * Math.min(Math.abs(d), vmax);
-          this.prevHeadS = this.headS;
           this.headS = wrap(this.headS + step);
           this.velS = Math.abs(step) / Math.max(dt, 1e-5);
         } else {
-          this.velS *= 0.84;
+          this.velS *= 0.86;
         }
-
         this.history.push({
           s: this.headS,
           t: time,
-          dir: this.direction,
-          speed: this.velS,
-          energy: mix(0.55, 1.0, this.inputStrength)
+          energy: mix(0.6, 1.0, this.inputStrength),
+          speed: this.velS
         });
       } else {
         this.velS *= 0.90;
       }
 
-      // longer memory but still finite
-      this.history = this.history.filter(h => time - h.t < 1.45);
+      this.history = this.history.filter(h => time - h.t < 1.55);
       this.propagations = this.propagations.filter(p => time - p.t0 < 2.5);
-      if(time - this.lastInputTime > 1.5 && this.history.length === 0) this.active = false;
-
       this.render(time);
     }
 
-    drawEllipticGlow(ctx, x, y, angle, rx, ry, color, alpha){
+    drawSoftNode(ctx, x, y, rx, ry, angle, rgba, alpha){
       ctx.save();
       ctx.translate(x,y);
       ctx.rotate(angle);
       ctx.globalAlpha = alpha;
-      ctx.fillStyle = color;
+      ctx.fillStyle = rgba;
       ctx.beginPath();
       ctx.ellipse(0,0,rx,ry,0,0,TAU);
       ctx.fill();
@@ -231,88 +206,73 @@
     render(time){
       const ctx = this.ctx, w = this.w, h = this.h;
       ctx.clearRect(0,0,w,h);
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
 
-      // Persistent memory of the route: subtle loaded traces after the head has passed.
+      // Organic brightness enhancement over the artwork, not an imposed beam.
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+
+      // Broad latent glow on recently traversed segments.
       for(let pass=0; pass<3; pass++){
-        const blur = pass===0 ? 28 : pass===1 ? 12 : 0;
-        ctx.shadowBlur = blur;
-        ctx.shadowColor = pass===2 ? 'rgba(255,255,255,0.95)' : 'rgba(135,228,255,0.9)';
-        for(let i=0;i<this.history.length;i++){
+        ctx.shadowBlur = pass===0 ? 22 : pass===1 ? 10 : 0;
+        ctx.shadowColor = pass===2 ? 'rgba(255,250,242,0.95)' : 'rgba(255,242,222,0.9)';
+        for(let i=0; i<this.history.length; i++){
           const q = this.history[i];
           const age = time - q.t;
-          const life = clamp(1 - age/1.45, 0, 1);
+          const life = clamp(1 - age/1.55, 0, 1);
           if(life <= 0) continue;
           const [px,py] = this.path.pointAt(q.s);
           const [tx,ty] = this.path.tangentAt(q.s);
-          const occ = occlusionFactor(q.s);
-          const pulse = 0.84 + 0.16 * Math.sin(time*10.8 - q.s*31);
           const x = px*w, y = py*h;
           const ang = Math.atan2(ty, tx);
-          const speedStretch = clamp(q.speed * 0.9, 0.2, 1.45);
-          const base = (pass===0 ? 13 : pass===1 ? 7 : 2.7);
-          const rx = base * (1.0 + 1.8 * speedStretch) * (0.55 + 0.7 * life);
-          const ry = base * (pass===2 ? 0.9 : 1.2) * (0.55 + 0.65 * life);
-          const alphaBase = pass===0 ? 0.06 : pass===1 ? 0.13 : 0.36;
-          const alpha = life * occ * q.energy * pulse * alphaBase * (0.75 + 0.55 * this.activity);
-          const color = pass===2 ? 'rgba(255,255,255,1)' : pass===1 ? 'rgba(178,242,255,1)' : 'rgba(110,218,255,1)';
-          this.drawEllipticGlow(ctx,x,y,ang,rx,ry,color,alpha);
+          const occ = occlusionFactor(q.s);
+          const shimmer = 0.9 + 0.1*Math.sin(time*7.8 - q.s*18.5);
+          const stretch = clamp(0.7 + q.speed * 0.65, 0.75, 1.7);
+          const base = pass===0 ? 16 : pass===1 ? 9 : 4.4;
+          const rx = base * stretch * (0.62 + 0.72*life);
+          const ry = base * (pass===2 ? 0.75 : 1.05) * (0.62 + 0.65*life);
+          const alphaBase = pass===0 ? 0.045 : pass===1 ? 0.10 : 0.20;
+          const alpha = life * q.energy * this.activity * occ * shimmer * alphaBase;
+          const col = pass===2 ? 'rgba(255,250,244,1)' : 'rgba(255,238,214,1)';
+          this.drawSoftNode(ctx,x,y,rx,ry,ang,col,alpha);
         }
       }
 
-      // Head: compact bright core + wider halo, both stretched by speed.
+      // Localized brightening head: subtle leading enhancement instead of a hard beam.
       if(this.headS !== null && this.history.length){
         const [px,py] = this.path.pointAt(this.headS);
         const [tx,ty] = this.path.tangentAt(this.headS);
+        const x = px*w, y = py*h;
         const ang = Math.atan2(ty, tx);
         const occ = occlusionFactor(this.headS);
-        const pulse = 0.74 + 0.26*Math.sin(time*12.7);
-        const stretch = clamp(this.velS * 1.2, 0.25, 1.7);
-        const x = px*w, y = py*h;
+        const pulse = 0.84 + 0.16*Math.sin(time*9.2);
+        const stretch = clamp(0.9 + this.velS * 0.7, 0.9, 1.8);
 
-        ctx.save();
-        ctx.translate(x,y);
-        ctx.rotate(ang);
-        const halo = ctx.createRadialGradient(0,0,0,0,0,42*(0.9 + 0.2*pulse));
-        halo.addColorStop(0, `rgba(255,255,255,${0.96*occ})`);
-        halo.addColorStop(0.12, `rgba(238,253,255,${0.95*occ})`);
-        halo.addColorStop(0.34, `rgba(170,240,255,${0.42*occ})`);
-        halo.addColorStop(1, 'rgba(110,220,255,0)');
-        ctx.fillStyle = halo;
-        ctx.globalAlpha = 0.7 + 0.28*this.activity;
-        ctx.beginPath();
-        ctx.ellipse(0,0,24*(1.0+1.8*stretch),12*(0.9+0.2*pulse),0,0,TAU);
-        ctx.fill();
-
-        ctx.shadowBlur = 20;
-        ctx.shadowColor = 'rgba(255,255,255,0.95)';
-        ctx.fillStyle = `rgba(255,252,245,${0.92*occ})`;
-        ctx.beginPath();
-        ctx.ellipse(0,0,8.4*(1+1.35*stretch),3.1*(0.92+0.12*pulse),0,0,TAU);
-        ctx.fill();
-        ctx.restore();
+        ctx.shadowBlur = 26;
+        ctx.shadowColor = 'rgba(255,246,224,0.95)';
+        this.drawSoftNode(ctx, x, y, 22*stretch, 10.5*pulse, ang, 'rgba(255,244,218,1)', 0.22*occ*(0.78+0.35*this.activity));
+        this.drawSoftNode(ctx, x, y, 11.5*stretch, 4.2, ang, 'rgba(255,252,244,1)', 0.34*occ*(0.85+0.35*this.activity));
+        this.drawSoftNode(ctx, x, y, 4.2, 2.2, ang, 'rgba(255,255,255,1)', 0.42*occ*(0.8+0.25*this.activity));
       }
 
-      // Tap propagations: canal-guided discharge with brighter fronts and softer trailing memory.
+      // Tap propagation remains coupled to the same path but as brightening pulses.
       for(const pr of this.propagations){
         const age = time - pr.t0;
         const life = clamp(1 - age/2.5, 0, 1);
-        const travel = 0.36 * age;
+        const travel = 0.35 * age;
         for(const dir of [-1,1]){
           const front = wrap(pr.s + dir * travel);
-          for(let k=0;k<28;k++){
-            const fall = 1 - k/28;
-            const ss = wrap(front - dir * k * 0.0032);
+          for(let k=0; k<26; k++){
+            const fall = 1 - k/26;
+            const ss = wrap(front - dir * k * 0.003);
             const [px,py] = this.path.pointAt(ss);
             const [tx,ty] = this.path.tangentAt(ss);
+            const x = px*w, y = py*h;
             const ang = Math.atan2(ty, tx);
             const occ = occlusionFactor(ss);
-            const a = fall * life * occ * (k < 5 ? 0.55 : 0.24);
-            const x = px*w, y = py*h;
-            ctx.shadowBlur = k < 5 ? 16 : 9;
-            ctx.shadowColor = 'rgba(255,255,255,0.95)';
-            this.drawEllipticGlow(ctx,x,y,ang, (k<5?9:4.8)*(1+0.7*fall), (k<5?3.1:2.2)*(1+0.2*fall), k<5 ? 'rgba(255,252,230,1)' : 'rgba(170,235,255,1)', a);
+            const alpha = fall * life * occ * (k < 4 ? 0.22 : 0.11);
+            const rx = (k < 4 ? 11 : 7) * (1 + 0.35*fall);
+            const ry = (k < 4 ? 4.2 : 3.4);
+            this.drawSoftNode(ctx, x, y, rx, ry, ang, k < 4 ? 'rgba(255,250,235,1)' : 'rgba(255,236,208,1)', alpha);
           }
         }
       }
