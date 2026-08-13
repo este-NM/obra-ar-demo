@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Chargermovement — prueba de recorrido</title>
+<style>
+  html,body{margin:0;height:100%;background:#080a0f;color:#eef;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
+  #stage{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);touch-action:none;box-shadow:0 20px 70px #000b;overflow:hidden}
+  #art,#fx,#debug{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #art{object-fit:fill;user-select:none;-webkit-user-drag:none}
+  #fx,#debug{pointer-events:none}
+  #cursor{position:absolute;width:16px;height:16px;border:1px solid #fff8;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;box-shadow:0 0 14px #9ef8;opacity:0;transition:opacity .25s}
+  #hud{position:fixed;left:14px;top:14px;z-index:5;background:#05070bb8;border:1px solid #ffffff20;border-radius:14px;padding:10px 12px;backdrop-filter:blur(10px);max-width:min(430px,calc(100vw - 28px));font-size:13px;line-height:1.35}
+  #hud b{color:#fff}
+  #hud .sub{opacity:.72;font-size:12px;margin-top:4px}
+  #tools{display:flex;gap:7px;margin-top:8px;flex-wrap:wrap}
+  button{border:1px solid #ffffff20;background:#ffffff0d;color:#eef;border-radius:999px;padding:7px 10px;font-size:12px}
+  @media(max-width:700px){#hud{font-size:12px}.sub{display:none}}
+</style>
+</head>
+<body>
+<div id="stage">
+  <img id="art" src="target.jpg" alt="Chargermovement">
+  <canvas id="fx"></canvas>
+  <canvas id="debug"></canvas>
+  <div id="cursor"></div>
+</div>
+<div id="hud"><b>Chargermovement — preview</b><div>El cursor representa la centralidad de cámara. Recorré la cinta para conducir el haz. Click/tap dispara propagación.</div><div class="sub">El haz no se activa fuera del canal. La estela conserva una persistencia media y la respuesta cambia de velocidad entre A–B–C–D–E–A.</div><div id="tools"><button id="pathBtn">Mostrar trayectoria</button><button id="resetBtn">Reset</button></div></div>
+<script src="path-data.js"></script>
+<script src="beam-engine.js"></script>
+<script>
+const ASPECT=420/297;
+const stage=document.getElementById('stage'), fx=document.getElementById('fx'), debug=document.getElementById('debug'), cur=document.getElementById('cursor');
+const engine=new ChargerBeam.BeamEngine(fx,{baseSpeed:.30,reacquireDelay:.85});
+let showPath=false,lastPointer=null,downAt=null,moved=false;
+
+function resize(){
+  const margin=24, vw=innerWidth-margin, vh=innerHeight-margin;
+  let w=vw,h=w/ASPECT;if(h>vh){h=vh;w=h*ASPECT}
+  stage.style.width=w+'px';stage.style.height=h+'px';
+  const cw=1200,ch=Math.round(cw/ASPECT);fx.width=cw;fx.height=ch;debug.width=cw;debug.height=ch;
+  engine.canvas=fx;engine.ctx=fx.getContext('2d');engine.w=cw;engine.h=ch;
+  drawDebug();
+}
+function normFromEvent(e){const r=stage.getBoundingClientRect();return {x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};}
+function setPointer(e){const p=normFromEvent(e);lastPointer=p;engine.setCentrality(p.x,p.y,performance.now()/1000);cur.style.left=(p.x*100)+'%';cur.style.top=(p.y*100)+'%';cur.style.opacity=1;}
+stage.addEventListener('pointerdown',e=>{stage.setPointerCapture(e.pointerId);downAt={x:e.clientX,y:e.clientY};moved=false;setPointer(e)});
+stage.addEventListener('pointermove',e=>{if(downAt && Math.hypot(e.clientX-downAt.x,e.clientY-downAt.y)>5)moved=true;setPointer(e)});
+stage.addEventListener('pointerup',e=>{const p=normFromEvent(e);if(!moved)engine.tapAt(p.x,p.y,performance.now()/1000);downAt=null;});
+stage.addEventListener('pointerleave',()=>{cur.style.opacity=.2;engine.clearCentrality()});
+document.getElementById('resetBtn').onclick=()=>{engine.headS=null;engine.targetS=null;engine.history=[];engine.propagations=[];};
+document.getElementById('pathBtn').onclick=e=>{showPath=!showPath;e.target.textContent=showPath?'Ocultar trayectoria':'Mostrar trayectoria';drawDebug();};
+function drawDebug(){const c=debug.getContext('2d');c.clearRect(0,0,debug.width,debug.height);if(!showPath)return;c.strokeStyle='rgba(255,70,70,.7)';c.lineWidth=1.4;c.beginPath();window.CHARGER_PATH.points.forEach((p,i)=>{const x=p[0]*debug.width,y=p[1]*debug.height;i?c.lineTo(x,y):c.moveTo(x,y)});c.closePath();c.stroke();}
+async function init(){resize();await engine.loadMask('channel-mask.png');requestAnimationFrame(loop)}
+function loop(ms){engine.update(ms/1000);requestAnimationFrame(loop)}
+addEventListener('resize',resize);init();
+</script>
+</body></html>
