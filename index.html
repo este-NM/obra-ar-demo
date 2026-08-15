@@ -30,7 +30,7 @@ button.active{background:#ffd27a26;border-color:#ffd27a55;color:#fff5dd}
 </head>
 <body>
 <div id="ar"></div>
-<div id="ui"><div id="card"><div id="title">Obras AR — un solo link</div><div id="status">Elegí qué obra querés escanear. Después podés cambiar de modo desde estos mismos botones.</div><div id="switches"><button id="btn-charger">Chargermovement</button><button id="btn-gold">Obra anterior</button></div><div id="details">Chargermovement usa el sistema de venas/recorrido. La obra anterior usa el nuevo modo recorrible por centralidad, no la radialidad vieja.</div></div></div>
+<div id="ui"><div id="card"><div id="title">Obras AR — un solo link</div><div id="status">Elegí qué obra querés escanear. Después podés cambiar de modo desde estos mismos botones.</div><div id="switches"><button id="btn-charger">Chargermovement</button><button id="btn-gold">Obra anterior</button></div><button id="btn-start" style="display:none;margin-top:12px;background:#ffd27a26;border-color:#ffd27a55">Activar cámara</button><div id="details">Chargermovement usa el sistema de venas/recorrido. La obra anterior usa el nuevo modo recorrible por centralidad, no la radialidad vieja.</div></div></div>
 <div id="reticle"></div>
 <script src="path-data.js"></script>
 <script src="beam-engine.js"></script>
@@ -44,9 +44,11 @@ const card=document.getElementById('card');
 const reticle=document.getElementById('reticle');
 const btnCharger=document.getElementById('btn-charger');
 const btnGold=document.getElementById('btn-gold');
+const btnStart=document.getElementById('btn-start');
 const centerNdc=new THREE.Vector2(0,0);
 let activeController=null;
 let switching=false;
+let preparedMode=null;
 
 function setActiveButton(mode){
   btnCharger.classList.toggle('active',mode==='charger');
@@ -128,16 +130,50 @@ class GoldController{
   async stop(){ container.removeEventListener('pointerdown',this.pointerDown); container.removeEventListener('pointerup',this.pointerUp); try{ this.renderer?.setAnimationLoop(null);}catch(e){} try{ await this.mindarThree?.stop(); }catch(e){} container.innerHTML=''; reticle.style.opacity=0; }
 }
 
-async function switchMode(mode){
-  if(switching) return; switching=true; setActiveButton(mode); status.textContent='Cambiando modo…'; card.classList.remove('ready');
-  if(activeController){ try{ await activeController.stop(); }catch(e){ console.error(e); } activeController=null; }
+async function prepareMode(mode){
+  if(switching) return;
+  switching=true;
+  btnStart.style.display='none';
+  btnStart.disabled=false;
+  setActiveButton(mode);
+  status.textContent='Preparando '+(mode==='charger'?'Chargermovement':'la obra anterior')+'…';
+  card.classList.remove('ready');
+
+  if(activeController){
+    try{ await activeController.stop(); }catch(e){ console.error(e); }
+    activeController=null;
+  }
+
   try{
-    if(mode==='charger') activeController=new ChargerController(); else activeController=new GoldController();
-    await activeController.init(); await activeController.start();
-  }catch(e){ console.error(e); status.textContent='No se pudo iniciar este modo. Revisá que el archivo .mind correspondiente esté presente.'; }
+    activeController = mode==='charger' ? new ChargerController() : new GoldController();
+    await activeController.init();
+    preparedMode=mode;
+    status.textContent='Modo listo. Tocá “Activar cámara”.';
+    btnStart.style.display='inline-block';
+  }catch(e){
+    console.error(e);
+    preparedMode=null;
+    status.textContent='No se pudo preparar este modo. Revisá que el archivo .mind correspondiente esté presente.';
+  }
   switching=false;
 }
-btnCharger.onclick=()=>switchMode('charger');
-btnGold.onclick=()=>switchMode('gold');
+
+btnStart.addEventListener('click', async ()=>{
+  if(!activeController || !preparedMode || switching) return;
+  btnStart.disabled=true;
+  status.textContent='Iniciando cámara…';
+  try{
+    // Important on iOS: start AR from this fresh user tap.
+    await activeController.start();
+    btnStart.style.display='none';
+  }catch(e){
+    console.error(e);
+    btnStart.disabled=false;
+    status.textContent='No se pudo abrir la cámara. Revisá el permiso de cámara de Safari y volvé a tocar “Activar cámara”.';
+  }
+});
+
+btnCharger.onclick=()=>prepareMode('charger');
+btnGold.onclick=()=>prepareMode('gold');
 </script>
 </body></html>
