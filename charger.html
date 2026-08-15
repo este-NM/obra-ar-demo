@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Chargermovement — AR</title>
+<style>
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:white}
+  #ar{position:fixed;inset:0}
+  #ui{position:fixed;z-index:20;left:14px;right:14px;top:14px;pointer-events:none}
+  #card{pointer-events:auto;max-width:430px;background:#05070bc7;border:1px solid #ffffff22;border-radius:15px;padding:12px 14px;backdrop-filter:blur(10px);transition:opacity .45s,transform .45s}
+  #card.ready{opacity:.25;transform:translateY(-3px)} #card.ready:hover{opacity:1}
+  #title{font-weight:700;margin-bottom:4px} #status{font-size:13px;opacity:.82;line-height:1.35}
+  button{margin-top:9px;border:1px solid #ffffff28;background:#ffffff12;color:#fff;border-radius:999px;padding:9px 13px;font-size:13px}
+  #reticle{position:fixed;z-index:15;left:50%;top:50%;width:15px;height:15px;border:1px solid #ffffff70;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 12px #bff5;opacity:0;transition:opacity .3s;pointer-events:none}
+  #reticle:before,#reticle:after{content:"";position:absolute;background:#ffffff65;left:50%;top:50%;transform:translate(-50%,-50%)}
+  #reticle:before{width:23px;height:1px}#reticle:after{width:1px;height:23px}
+  #missing{display:none;margin-top:8px;font-size:12px;color:#ffd7a0}
+  a{color:#bfe8ff}
+</style>
+<script type="importmap">{
+  "imports":{
+    "three":"https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/",
+    "mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+  }
+}</script>
+</head>
+<body>
+<a href="./index.html" style="position:fixed;z-index:40;right:14px;top:14px;color:#fff;text-decoration:none;background:#05070bc7;border:1px solid #ffffff28;border-radius:999px;padding:8px 11px;font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">← Obras</a>
+<div id="ar"></div>
+<div id="ui"><div id="card"><div id="title">Chargermovement — recorrido AR</div><div id="status">Listo para iniciar. La centralidad de pantalla conduce el haz por la cinta.</div><button id="start">Activar cámara</button><div id="missing">Falta <b>targetscharger.mind</b>. Compilá <b>target.jpg</b> con el compilador de imágenes de MindAR y subí el archivo resultante con ese nombre. Mientras tanto podés abrir <a href="preview.html">preview.html</a>.</div></div></div>
+<div id="reticle"></div>
+<canvas id="fx" width="1200" height="849" style="display:none"></canvas>
+<script src="path-data.js"></script>
+<script src="beam-engine.js"></script>
+<script type="module">
+import * as THREE from 'three';
+import {MindARThree} from 'mindar-image-three';
+
+const PRINT_H=297/420;
+const container=document.getElementById('ar');
+const fx=document.getElementById('fx');
+const engine=new ChargerBeam.BeamEngine(fx,{baseSpeed:.27,reacquireDelay:.9});
+await engine.loadMask('channel-mask.png');
+const status=document.getElementById('status'), card=document.getElementById('card'), startBtn=document.getElementById('start'), missing=document.getElementById('missing'), reticle=document.getElementById('reticle');
+let mindarThree=null,renderer=null,scene=null,camera=null,anchor=null,tracked=false,started=false;
+let targetGroup=null;
+
+async function targetExists(){try{const r=await fetch('targetscharger.mind',{cache:'no-store'});return r.ok}catch(e){return false}}
+const hasTarget=await targetExists();
+if(!hasTarget){missing.style.display='block';status.textContent='El efecto está listo; falta únicamente el archivo de reconocimiento de este print.';}
+
+function intersectTarget(ndcX,ndcY){
+  if(!tracked||!camera||!targetGroup)return null;
+  const raycaster=new THREE.Raycaster();raycaster.setFromCamera(new THREE.Vector2(ndcX,ndcY),camera);
+  const origin=new THREE.Vector3();targetGroup.getWorldPosition(origin);
+  const q=new THREE.Quaternion();targetGroup.getWorldQuaternion(q);
+  const normal=new THREE.Vector3(0,0,1).applyQuaternion(q).normalize();
+  const plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,origin);
+  const hit=new THREE.Vector3();if(!raycaster.ray.intersectPlane(plane,hit))return null;
+  const local=targetGroup.worldToLocal(hit.clone());
+  const nx=local.x+0.5,ny=0.5-local.y/PRINT_H;
+  if(nx<0||nx>1||ny<0||ny>1)return null;
+  return {x:nx,y:ny};
+}
+
+async function startAR(){
+  if(started||!hasTarget)return;started=true;startBtn.disabled=true;status.textContent='Iniciando cámara…';
+  try{
+    mindarThree=new MindARThree({container,imageTargetSrc:'./targetscharger.mind',uiLoading:'no',uiScanning:'no',uiError:'no'});
+    ({renderer,scene,camera}=mindarThree);
+    anchor=mindarThree.addAnchor(0);targetGroup=anchor.group;
+
+    const texture=new THREE.CanvasTexture(fx);texture.colorSpace=THREE.SRGBColorSpace;texture.minFilter=THREE.LinearFilter;texture.magFilter=THREE.LinearFilter;
+    const mat=new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:false,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide,toneMapped:false});
+    const mesh=new THREE.Mesh(new THREE.PlaneGeometry(1,PRINT_H),mat);mesh.position.z=.006;mesh.renderOrder=20;anchor.group.add(mesh);
+    anchor.onTargetFound=()=>{tracked=true;status.textContent='Print reconocido — desplazá la centralidad por la cinta.';reticle.style.opacity=.72;card.classList.add('ready')};
+    anchor.onTargetLost=()=>{tracked=false;engine.clearCentrality();status.textContent='Buscando nuevamente el print…';reticle.style.opacity=.18;card.classList.remove('ready')};
+    await mindarThree.start();status.textContent='Apuntá al print completo para reconocerlo.';startBtn.style.display='none';
+    renderer.setAnimationLoop(()=>{
+      const t=performance.now()/1000;
+      if(tracked){const p=intersectTarget(0,0);if(p)engine.setCentrality(p.x,p.y,t);else engine.clearCentrality();}
+      engine.update(t);texture.needsUpdate=true;renderer.render(scene,camera);
+    });
+  }catch(err){console.error(err);status.textContent='No fue posible iniciar AR. Revisá permisos de cámara y targetscharger.mind.';started=false;startBtn.disabled=false;}
+}
+startBtn.onclick=startAR;
+container.addEventListener('pointerdown',e=>{
+  if(!tracked||!renderer)return;
+  const r=renderer.domElement.getBoundingClientRect();const x=((e.clientX-r.left)/r.width)*2-1;const y=-(((e.clientY-r.top)/r.height)*2-1);
+  const p=intersectTarget(x,y);if(p)engine.tapAt(p.x,p.y,performance.now()/1000);
+});
+</script>
+</body></html>

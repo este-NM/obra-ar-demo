@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#000000" />
+  <title>Obra AR — reconocimiento del print</title>
+
+  <script>
+    window.addEventListener('error', (event) => {
+      const box = document.querySelector('#error');
+      const status = document.querySelector('#status');
+      if (status) status.textContent = 'Se produjo un error al cargar la experiencia.';
+      if (box) {
+        box.textContent = event.message || 'Error de carga no identificado.';
+        box.style.display = 'block';
+      }
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      const box = document.querySelector('#error');
+      const status = document.querySelector('#status');
+      if (status) status.textContent = 'No se pudo iniciar la experiencia.';
+      if (box) {
+        box.textContent = event.reason?.message || String(event.reason || 'Error no identificado.');
+        box.style.display = 'block';
+      }
+    });
+  </script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+    }
+  }
+  </script>
+
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    #ar-container { position: fixed; inset: 0; overflow: hidden; background: #000; }
+    #ui { position: fixed; inset: 0; z-index: 20; pointer-events: none; color: #fff5df; }
+    #card { position: absolute; left: 14px; right: 14px; top: 14px; max-width: 480px; padding: 12px 14px; border-radius: 15px; background: rgba(0,0,0,.52); border: 1px solid rgba(255,210,125,.22); backdrop-filter: blur(10px); box-sizing: border-box; pointer-events: auto; }
+    #title { font-size: 15px; font-weight: 650; color: #ffd27a; margin-bottom: 5px; }
+    #status { font-size: 13px; line-height: 1.4; opacity: .93; }
+    #start { margin-top: 10px; padding: 11px 15px; border-radius: 999px; border: 1px solid rgba(255,220,160,.28); background: rgba(255,205,110,.16); color: #fff4da; font-size: 14px; display: none; }
+    #start:disabled { opacity: .5; }
+    #hint { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 9px 12px; border-radius: 999px; background: rgba(0,0,0,.46); border: 1px solid rgba(255,220,160,.15); font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity .45s; }
+    #hint.show { opacity: 1; }
+    #center-mark { position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; margin-left: -9px; margin-top: -9px; border-radius: 999px; border: 1px solid rgba(255,245,220,.45); box-shadow: 0 0 0 1px rgba(0,0,0,.35) inset; opacity: .0; transition: opacity .35s; }
+    #center-mark.show { opacity: .38; }
+    #error { margin-top: 8px; color: #ffc5a8; font-size: 12px; line-height: 1.35; display: none; }
+    #details { margin-top: 7px; font-size: 11px; opacity: .68; line-height: 1.35; }
+    @media (max-width: 520px) { #card { max-width: none; } }
+  </style>
+</head>
+<body>
+<a href="./index.html" style="position:fixed;z-index:40;right:14px;top:14px;color:#fff;text-decoration:none;background:rgba(0,0,0,.62);border:1px solid rgba(255,220,160,.22);border-radius:999px;padding:8px 11px;font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">← Obras</a>
+  <div id="ar-container"></div>
+  <div id="ui">
+    <div id="card">
+      <div id="title">Obra anterior — recorrido por centralidad</div>
+      <div id="status">Comprobando los archivos de reconocimiento…</div>
+      <button id="start">Activar cámara</button>
+      <div id="error"></div>
+      <div id="details">Ahora la luminosidad se activa desde la centralidad de la cámara y recorre los trazos sólo donde el centro del encuadre pasa por ellos.</div>
+    </div>
+    <div id="hint">Centrá la obra. El punto medio de la pantalla va encendiendo los trazos.</div>
+    <div id="center-mark"></div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { MindARThree } from 'mindar-image-three';
+
+    const TARGET_HEIGHT = 28.6 / 40.5;
+    const statusEl = document.querySelector('#status');
+    const startBtn = document.querySelector('#start');
+    const errorEl = document.querySelector('#error');
+    const hintEl = document.querySelector('#hint');
+    const centerMark = document.querySelector('#center-mark');
+    const container = document.querySelector('#ar-container');
+
+    let mindarThree;
+    let renderer;
+    let scene;
+    let camera;
+    let found = false;
+    let clickAt = -1000;
+    let traceMaterial;
+    let glowMaterial;
+    let tracePlane;
+
+    const MAX_FOCI = 12;
+    const FOCUS_LIFE = 1.45;
+    const focusPoints = Array.from({length: MAX_FOCI}, () => new THREE.Vector2(0.5, 0.5));
+    const focusWeights = new Float32Array(MAX_FOCI);
+    const focusTimes = [];
+    const centerNdc = new THREE.Vector2(0, 0);
+    const clickUv = new THREE.Vector2(0.5, 0.5);
+    let raycaster;
+
+    const vertexShader = `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    const fragmentShader = `
+      precision highp float;
+      varying vec2 vUv;
+      uniform sampler2D uTex;
+      uniform float uTime;
+      uniform float uFound;
+      uniform vec2 uClickUv;
+      uniform float uSinceClick;
+      uniform float uGlowGain;
+      uniform float uBaseGain;
+      uniform vec2 uFocusUv[${MAX_FOCI}];
+      uniform float uFocusW[${MAX_FOCI}];
+
+      float gaussian(float x, float width) {
+        return exp(-(x*x) / max(0.0001, width*width));
+      }
+
+      void main() {
+        vec4 tex = texture2D(uTex, vUv);
+        if (tex.a < 0.008) discard;
+
+        vec2 aspectUv = vUv;
+        vec2 centered = aspectUv - vec2(0.5);
+        centered.x *= 1.415668203;
+        float radial = length(centered);
+
+        float pathEnergy = 0.0;
+        for (int i = 0; i < ${MAX_FOCI}; i++) {
+          vec2 d = aspectUv - uFocusUv[i];
+          d.x *= 1.415668203;
+          float dst = length(d);
+          float head = gaussian(dst, 0.050 + 0.010*sin(uTime*1.2 + float(i)*0.55));
+          float halo = gaussian(dst, 0.105);
+          float circuit = 0.5 + 0.5*sin(uTime*4.2 - dst*34.0 + vUv.y*9.0 + float(i)*0.45);
+          circuit = pow(circuit, 3.5);
+          pathEnergy += uFocusW[i] * (head * 1.45 + halo * 0.38 + circuit * halo * 0.68);
+        }
+
+        vec2 clickDelta = vUv - uClickUv;
+        clickDelta.x *= 1.415668203;
+        float clickDist = length(clickDelta);
+        float clickP = clamp(uSinceClick / 2.20, 0.0, 1.0);
+        float clickRadius = clickP * 1.16;
+        float clickRing = gaussian(clickDist - clickRadius, 0.032 + 0.016*(1.0-clickP));
+        clickRing *= (1.0 - clickP);
+
+        float breathing = 0.78 + 0.22*sin(uTime*1.1);
+        float coreSuppression = 1.0 - smoothstep(0.78, 1.05, radial); // avoid lighting all the print evenly
+
+        float energy = uBaseGain * (0.08 + pathEnergy * 1.05 * breathing) * coreSuppression;
+        energy += clickRing * 2.05;
+        energy *= uFound;
+
+        vec3 warm = tex.rgb * vec3(1.12, 1.05, 0.92);
+        vec3 color = warm * (1.0 + energy * uGlowGain);
+        float alpha = tex.a * clamp(energy, 0.0, 1.75);
+        gl_FragColor = vec4(color, alpha);
+      }
+    `;
+
+    function makeMaterial(texture, glowGain, baseGain) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uTex: { value: texture },
+          uTime: { value: 0 },
+          uFound: { value: 0 },
+          uClickUv: { value: clickUv.clone() },
+          uSinceClick: { value: 999 },
+          uGlowGain: { value: glowGain },
+          uBaseGain: { value: baseGain },
+          uFocusUv: { value: focusPoints },
+          uFocusW: { value: focusWeights }
+        },
+        vertexShader,
+        fragmentShader,
+        transparent: true,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide
+      });
+    }
+
+    async function verifyRequiredFiles() {
+      const required = ['./targetsprevio.mind', './gold-traces.png', './gold-glow.png'];
+      for (const url of required) {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`Falta ${url.replace('./','')} en la raíz del repositorio.`);
+        }
+      }
+    }
+
+    function pushFocus(uv, time) {
+      const last = focusTimes.length ? focusTimes[focusTimes.length - 1] : null;
+      const lastUv = last?.uv;
+      if (!lastUv || lastUv.distanceTo(uv) > 0.012 || time - last.time > 0.07) {
+        focusTimes.push({ uv: uv.clone(), time });
+      } else {
+        last.uv.copy(uv);
+        last.time = time;
+      }
+      while (focusTimes.length > MAX_FOCI) focusTimes.shift();
+    }
+
+    function updateFocusUniforms(now) {
+      while (focusTimes.length && now - focusTimes[0].time > FOCUS_LIFE) focusTimes.shift();
+      for (let i = 0; i < MAX_FOCI; i++) {
+        if (i < focusTimes.length) {
+          const item = focusTimes[focusTimes.length - 1 - i];
+          const age = Math.max(0, now - item.time);
+          const w = Math.pow(Math.max(0, 1 - age / FOCUS_LIFE), 1.2);
+          focusPoints[i].copy(item.uv);
+          focusWeights[i] = w;
+        } else {
+          focusPoints[i].set(0.5, 0.5);
+          focusWeights[i] = 0.0;
+        }
+      }
+    }
+
+    async function setupAR() {
+      mindarThree = new MindARThree({
+        container,
+        imageTargetSrc: './targetsprevio.mind',
+        filterMinCF: 0.001,
+        filterBeta: 0.01,
+        missTolerance: 7,
+        warmupTolerance: 5,
+        uiLoading: 'no',
+        uiScanning: 'no',
+        uiError: 'no'
+      });
+
+      ({ renderer, scene, camera } = mindarThree);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+      const anchor = mindarThree.addAnchor(0);
+      const loader = new THREE.TextureLoader();
+      const [traceTex, glowTex] = await Promise.all([
+        loader.loadAsync('./gold-traces.png'),
+        loader.loadAsync('./gold-glow.png')
+      ]);
+
+      traceTex.colorSpace = THREE.SRGBColorSpace;
+      glowTex.colorSpace = THREE.SRGBColorSpace;
+      traceTex.minFilter = THREE.LinearFilter;
+      glowTex.minFilter = THREE.LinearFilter;
+
+      traceMaterial = makeMaterial(traceTex, 1.42, 1.0);
+      glowMaterial = makeMaterial(glowTex, 1.72, 0.74);
+
+      const geometry = new THREE.PlaneGeometry(1, TARGET_HEIGHT);
+      const glowPlane = new THREE.Mesh(geometry, glowMaterial);
+      glowPlane.position.z = 0.006;
+      glowPlane.scale.set(1.012, 1.012, 1);
+      tracePlane = new THREE.Mesh(geometry, traceMaterial);
+      tracePlane.position.z = 0.011;
+
+      anchor.group.add(glowPlane);
+      anchor.group.add(tracePlane);
+
+      anchor.onTargetFound = () => {
+        found = true;
+        statusEl.textContent = 'Obra reconocida — la centralidad de la cámara activa el recorrido.';
+        hintEl.classList.remove('show');
+        centerMark.classList.add('show');
+      };
+
+      anchor.onTargetLost = () => {
+        found = false;
+        statusEl.textContent = 'Se perdió el seguimiento. Volvé a encuadrar el print.';
+        hintEl.classList.add('show');
+        centerMark.classList.remove('show');
+      };
+
+      raycaster = new THREE.Raycaster();
+      const pointer = new THREE.Vector2();
+      let downX = 0;
+      let downY = 0;
+      let downAt = 0;
+
+      container.addEventListener('pointerdown', (event) => {
+        downX = event.clientX;
+        downY = event.clientY;
+        downAt = performance.now();
+      });
+
+      container.addEventListener('pointerup', (event) => {
+        if (!found || performance.now() - downAt > 420 || Math.hypot(event.clientX - downX, event.clientY - downY) > 18) return;
+        pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+        pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+        const hits = raycaster.intersectObject(tracePlane, false);
+        if (hits.length && hits[0].uv) {
+          clickUv.copy(hits[0].uv);
+          clickAt = performance.now() * 0.001;
+          traceMaterial.uniforms.uClickUv.value.copy(clickUv);
+          glowMaterial.uniforms.uClickUv.value.copy(clickUv);
+        }
+      });
+    }
+
+    async function initialize() {
+      try {
+        if (!window.isSecureContext) throw new Error('La cámara requiere una página HTTPS.');
+        await verifyRequiredFiles();
+        await setupAR();
+        statusEl.textContent = 'Todo listo. Activá la cámara y apuntá al print completo.';
+        startBtn.style.display = 'inline-block';
+      } catch (error) {
+        console.error(error);
+        statusEl.textContent = 'La experiencia todavía no está lista.';
+        errorEl.textContent = error?.message || String(error);
+        errorEl.style.display = 'block';
+      }
+    }
+
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true;
+      statusEl.textContent = 'Solicitando acceso a la cámara…';
+      try {
+        await mindarThree.start();
+        startBtn.style.display = 'none';
+        hintEl.classList.add('show');
+        centerMark.classList.add('show');
+        statusEl.textContent = 'Apuntá al print completo. El centro de pantalla va encendiendo los trazos.';
+
+        renderer.setAnimationLoop(() => {
+          const now = performance.now() * 0.001;
+          const sinceClick = Math.max(0, now - clickAt);
+          const targetFound = found ? 1 : 0;
+
+          if (found && tracePlane) {
+            raycaster.setFromCamera(centerNdc, camera);
+            const hits = raycaster.intersectObject(tracePlane, false);
+            if (hits.length && hits[0].uv) {
+              pushFocus(hits[0].uv, now);
+            }
+          }
+          updateFocusUniforms(now);
+
+          for (const material of [traceMaterial, glowMaterial]) {
+            material.uniforms.uTime.value = now;
+            material.uniforms.uFound.value += (targetFound - material.uniforms.uFound.value) * 0.12;
+            material.uniforms.uSinceClick.value = sinceClick;
+            material.uniforms.uFocusW.value = focusWeights;
+            material.uniforms.uFocusUv.value = focusPoints;
+          }
+          renderer.render(scene, camera);
+        });
+      } catch (error) {
+        console.error(error);
+        startBtn.disabled = false;
+        statusEl.textContent = 'No se pudo iniciar la cámara.';
+        errorEl.textContent = error?.message || 'Revisá el permiso de cámara en Safari y recargá la página.';
+        errorEl.style.display = 'block';
+      }
+    });
+
+    initialize();
+  </script>
+</body>
+</html>
