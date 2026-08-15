@@ -4,216 +4,140 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#000000">
-<title>Obras AR — reconocimiento múltiple</title>
+<title>Obras AR — selector</title>
 <style>
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff}
-#ar{position:fixed;inset:0}
+#ar{position:fixed;inset:0;background:#000}
 #ui{position:fixed;z-index:20;left:14px;right:14px;top:14px;pointer-events:none}
-#card{pointer-events:auto;max-width:470px;background:#05070bc7;border:1px solid #ffffff22;border-radius:15px;padding:12px 14px;backdrop-filter:blur(10px);transition:opacity .45s,transform .45s}
-#card.ready{opacity:.25;transform:translateY(-3px)}
-#title{font-weight:700;margin-bottom:4px}
-#status{font-size:13px;opacity:.84;line-height:1.4}
-button{margin-top:9px;border:1px solid #ffffff28;background:#ffffff12;color:#fff;border-radius:999px;padding:9px 13px;font-size:13px}
-#reticle{position:fixed;z-index:15;left:50%;top:50%;width:15px;height:15px;border:1px solid #ffffff70;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 12px #bff5;opacity:0;transition:opacity .3s;pointer-events:none}
+#card{pointer-events:auto;max-width:470px;background:#05070bcf;border:1px solid #ffffff22;border-radius:16px;padding:12px 14px;backdrop-filter:blur(10px);transition:opacity .45s,transform .45s}
+#card.ready{opacity:.26;transform:translateY(-3px)} #card.ready:hover{opacity:1}
+#title{font-weight:700;margin-bottom:4px;color:#ffd27a}
+#status{font-size:13px;opacity:.86;line-height:1.38}
+button{margin-top:9px;margin-right:8px;border:1px solid #ffffff28;background:#ffffff12;color:#fff;border-radius:999px;padding:9px 13px;font-size:13px}
+button.active{background:#ffd27a26;border-color:#ffd27a55;color:#fff5dd}
+#switches{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+#reticle{position:fixed;z-index:15;left:50%;top:50%;width:16px;height:16px;border:1px solid #ffffff70;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 12px #bff5;opacity:0;transition:opacity .3s;pointer-events:none}
 #reticle:before,#reticle:after{content:"";position:absolute;background:#ffffff65;left:50%;top:50%;transform:translate(-50%,-50%)}
-#reticle:before{width:23px;height:1px}#reticle:after{width:1px;height:23px}
-#error{display:none;margin-top:8px;font-size:12px;color:#ffd7a0;line-height:1.35}
-#details{margin-top:7px;font-size:11px;opacity:.66;line-height:1.35}
+#reticle:before{width:24px;height:1px} #reticle:after{width:1px;height:24px}
+#details{margin-top:8px;font-size:11px;opacity:.7;line-height:1.35}
 </style>
 <script type="importmap">{
   "imports":{
     "three":"https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/",
     "mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
   }
 }</script>
 </head>
 <body>
 <div id="ar"></div>
-<div id="ui"><div id="card"><div id="title">Obras AR — reconocimiento múltiple</div><div id="status">Comprobando archivos…</div><button id="start" style="display:none">Activar cámara</button><div id="error"></div><div id="details">Target 0: Chargermovement. Target 1: obra dorada anterior. La experiencia cambia automáticamente según el print reconocido.</div></div></div>
+<div id="ui"><div id="card"><div id="title">Obras AR — un solo link</div><div id="status">Elegí qué obra querés escanear. Después podés cambiar de modo desde estos mismos botones.</div><div id="switches"><button id="btn-charger">Chargermovement</button><button id="btn-gold">Obra anterior</button></div><div id="details">Chargermovement usa el sistema de venas/recorrido. La obra anterior usa el nuevo modo recorrible por centralidad, no la radialidad vieja.</div></div></div>
 <div id="reticle"></div>
-<canvas id="fx" width="1200" height="849" style="display:none"></canvas>
 <script src="path-data.js"></script>
 <script src="beam-engine.js"></script>
 <script type="module">
 import * as THREE from 'three';
 import {MindARThree} from 'mindar-image-three';
 
-const CHARGER_H=297/420;
-const GOLD_H=723/1024;
 const container=document.getElementById('ar');
-const fx=document.getElementById('fx');
-const statusEl=document.getElementById('status');
+const status=document.getElementById('status');
 const card=document.getElementById('card');
-const startBtn=document.getElementById('start');
-const errorEl=document.getElementById('error');
 const reticle=document.getElementById('reticle');
-
-const engine=new ChargerBeam.BeamEngine(fx,{baseSpeed:.27,reacquireDelay:.95});
-await engine.loadMask('channel-mask.png');
-
-let mindarThree,renderer,scene,camera;
-let chargerAnchor,chargerGroup,chargerTracked=false,chargerTexture;
-let goldAnchor,goldTracked=false,goldTracePlane,goldTraceMaterial,goldGlowMaterial;
-let started=false;
-
-const MAX_FOCI=12;
-const FOCUS_LIFE=1.45;
-const focusPoints=Array.from({length:MAX_FOCI},()=>new THREE.Vector2(.5,.5));
-const focusWeights=new Float32Array(MAX_FOCI);
-const focusTimes=[];
-const clickUv=new THREE.Vector2(.5,.5);
-let clickAt=-1000;
-const raycaster=new THREE.Raycaster();
+const btnCharger=document.getElementById('btn-charger');
+const btnGold=document.getElementById('btn-gold');
 const centerNdc=new THREE.Vector2(0,0);
+let activeController=null;
+let switching=false;
 
-const vertexShader=`
-varying vec2 vUv;
-void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`;
+function setActiveButton(mode){
+  btnCharger.classList.toggle('active',mode==='charger');
+  btnGold.classList.toggle('active',mode==='gold');
+}
 
-const fragmentShader=`
-precision highp float;
-varying vec2 vUv;
-uniform sampler2D uTex;
-uniform float uTime;
-uniform float uFound;
-uniform vec2 uClickUv;
-uniform float uSinceClick;
-uniform float uGlowGain;
-uniform float uBaseGain;
-uniform vec2 uFocusUv[${MAX_FOCI}];
-uniform float uFocusW[${MAX_FOCI}];
-float gaussian(float x,float width){return exp(-(x*x)/max(.0001,width*width));}
-void main(){
-  vec4 tex=texture2D(uTex,vUv);if(tex.a<.008)discard;
-  vec2 centered=vUv-vec2(.5);centered.x*=1.415668203;float radial=length(centered);
-  float pathEnergy=0.0;
-  for(int i=0;i<${MAX_FOCI};i++){
-    vec2 d=vUv-uFocusUv[i];d.x*=1.415668203;float dst=length(d);
-    float head=gaussian(dst,.050+.010*sin(uTime*1.2+float(i)*.55));
-    float halo=gaussian(dst,.105);
-    float circuit=.5+.5*sin(uTime*4.2-dst*34.0+vUv.y*9.0+float(i)*.45);circuit=pow(circuit,3.5);
-    pathEnergy+=uFocusW[i]*(head*1.45+halo*.38+circuit*halo*.68);
+class ChargerController{
+  constructor(){ this.PRINT_H=297/420; this.name='Chargermovement'; }
+  async init(){
+    this.fx=document.createElement('canvas'); this.fx.width=1200; this.fx.height=Math.round(1200*this.PRINT_H); this.fx.style.display='none'; document.body.appendChild(this.fx);
+    this.engine=new ChargerBeam.BeamEngine(this.fx,{baseSpeed:.27,reacquireDelay:.9});
+    await this.engine.loadMask('channel-mask.png');
+    this.mindarThree=new MindARThree({container,imageTargetSrc:'./targetscharger.mind',uiLoading:'no',uiScanning:'no',uiError:'no'});
+    ({renderer:this.renderer,scene:this.scene,camera:this.camera}=this.mindarThree);
+    this.anchor=this.mindarThree.addAnchor(0); this.targetGroup=this.anchor.group; this.tracked=false;
+    const texture=new THREE.CanvasTexture(this.fx); this.texture=texture; texture.colorSpace=THREE.SRGBColorSpace; texture.minFilter=THREE.LinearFilter; texture.magFilter=THREE.LinearFilter;
+    const mat=new THREE.MeshBasicMaterial({map:texture,transparent:true,depthTest:false,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide,toneMapped:false});
+    const mesh=new THREE.Mesh(new THREE.PlaneGeometry(1,this.PRINT_H),mat); mesh.position.z=.006; mesh.renderOrder=20; this.anchor.group.add(mesh);
+    this.anchor.onTargetFound=()=>{this.tracked=true; status.textContent='Chargermovement reconocido — desplazá la centralidad por la cinta.'; reticle.style.opacity=.72; card.classList.add('ready')};
+    this.anchor.onTargetLost=()=>{this.tracked=false; this.engine.clearCentrality(); status.textContent='Buscando nuevamente Chargermovement…'; reticle.style.opacity=.18; card.classList.remove('ready')};
+    this.pointerHandler=(e)=>{ if(!this.tracked||!this.renderer) return; const r=this.renderer.domElement.getBoundingClientRect(); const x=((e.clientX-r.left)/r.width)*2-1; const y=-(((e.clientY-r.top)/r.height)*2-1); const p=this.intersectTarget(x,y); if(p) this.engine.tapAt(p.x,p.y,performance.now()/1000); };
+    container.addEventListener('pointerdown',this.pointerHandler);
   }
-  vec2 clickDelta=vUv-uClickUv;clickDelta.x*=1.415668203;float clickDist=length(clickDelta);
-  float clickP=clamp(uSinceClick/2.20,0.0,1.0);float clickRadius=clickP*1.16;
-  float clickRing=gaussian(clickDist-clickRadius,.032+.016*(1.0-clickP))*(1.0-clickP);
-  float breathing=.78+.22*sin(uTime*1.1);
-  float coreSuppression=1.0-smoothstep(.78,1.05,radial);
-  float energy=uBaseGain*(.08+pathEnergy*1.05*breathing)*coreSuppression;
-  energy+=clickRing*2.05;energy*=uFound;
-  vec3 warm=tex.rgb*vec3(1.12,1.05,.92);
-  vec3 color=warm*(1.0+energy*uGlowGain);
-  float alpha=tex.a*clamp(energy,0.0,1.75);
-  gl_FragColor=vec4(color,alpha);
-}`;
-
-function makeGoldMaterial(texture,glowGain,baseGain){
-  return new THREE.ShaderMaterial({
-    uniforms:{uTex:{value:texture},uTime:{value:0},uFound:{value:0},uClickUv:{value:clickUv.clone()},uSinceClick:{value:999},uGlowGain:{value:glowGain},uBaseGain:{value:baseGain},uFocusUv:{value:focusPoints},uFocusW:{value:focusWeights}},
-    vertexShader,fragmentShader,transparent:true,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide
-  });
-}
-
-function setStatus(text,ready=false){
-  statusEl.textContent=text;
-  card.classList.toggle('ready',ready);
-  reticle.style.opacity=ready?.72:.18;
-}
-
-async function verify(){
-  const req=['targets.mind','path-data.js','beam-engine.js','channel-mask.png','veins.png','gold-traces.png','gold-glow.png'];
-  for(const f of req){const r=await fetch('./'+f,{cache:'no-store'});if(!r.ok)throw new Error('Falta '+f+' en el repositorio.');}
-}
-
-function intersectCharger(ndcX,ndcY){
-  if(!chargerTracked||!camera||!chargerGroup)return null;
-  raycaster.setFromCamera(new THREE.Vector2(ndcX,ndcY),camera);
-  const origin=new THREE.Vector3();chargerGroup.getWorldPosition(origin);
-  const q=new THREE.Quaternion();chargerGroup.getWorldQuaternion(q);
-  const normal=new THREE.Vector3(0,0,1).applyQuaternion(q).normalize();
-  const plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,origin);
-  const hit=new THREE.Vector3();if(!raycaster.ray.intersectPlane(plane,hit))return null;
-  const local=chargerGroup.worldToLocal(hit.clone());
-  const nx=local.x+.5,ny=.5-local.y/CHARGER_H;
-  if(nx<0||nx>1||ny<0||ny>1)return null;
-  return{x:nx,y:ny};
-}
-
-function pushFocus(uv,time){
-  const last=focusTimes.length?focusTimes[focusTimes.length-1]:null;
-  if(!last||last.uv.distanceTo(uv)>.012||time-last.time>.07)focusTimes.push({uv:uv.clone(),time});
-  else{last.uv.copy(uv);last.time=time;}
-  while(focusTimes.length>MAX_FOCI)focusTimes.shift();
-}
-function updateFocus(now){
-  while(focusTimes.length&&now-focusTimes[0].time>FOCUS_LIFE)focusTimes.shift();
-  for(let i=0;i<MAX_FOCI;i++){
-    if(i<focusTimes.length){const item=focusTimes[focusTimes.length-1-i];const age=Math.max(0,now-item.time);focusPoints[i].copy(item.uv);focusWeights[i]=Math.pow(Math.max(0,1-age/FOCUS_LIFE),1.2);}
-    else{focusPoints[i].set(.5,.5);focusWeights[i]=0;}
+  intersectTarget(ndcX,ndcY){
+    if(!this.tracked||!this.camera||!this.targetGroup) return null;
+    const raycaster=new THREE.Raycaster(); raycaster.setFromCamera(new THREE.Vector2(ndcX,ndcY),this.camera);
+    const origin=new THREE.Vector3(); this.targetGroup.getWorldPosition(origin);
+    const q=new THREE.Quaternion(); this.targetGroup.getWorldQuaternion(q);
+    const normal=new THREE.Vector3(0,0,1).applyQuaternion(q).normalize();
+    const plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal,origin);
+    const hit=new THREE.Vector3(); if(!raycaster.ray.intersectPlane(plane,hit)) return null;
+    const local=this.targetGroup.worldToLocal(hit.clone());
+    const nx=local.x+0.5, ny=0.5-local.y/this.PRINT_H; if(nx<0||nx>1||ny<0||ny>1) return null; return {x:nx,y:ny};
+  }
+  async start(){
+    await this.mindarThree.start();
+    status.textContent='Apuntá al print completo de Chargermovement.';
+    this.renderer.setAnimationLoop(()=>{ const t=performance.now()/1000; if(this.tracked){ const p=this.intersectTarget(0,0); if(p) this.engine.setCentrality(p.x,p.y,t); else this.engine.clearCentrality(); } this.engine.update(t); this.texture.needsUpdate=true; this.renderer.render(this.scene,this.camera); });
+  }
+  async stop(){
+    container.removeEventListener('pointerdown',this.pointerHandler);
+    try{ this.renderer?.setAnimationLoop(null);}catch(e){}
+    try{ await this.mindarThree?.stop(); }catch(e){}
+    try{ this.fx?.remove(); }catch(e){}
+    container.innerHTML=''; reticle.style.opacity=0;
   }
 }
 
-async function setup(){
-  mindarThree=new MindARThree({container,imageTargetSrc:'./targets.mind',maxTrack:1,filterMinCF:.001,filterBeta:.01,missTolerance:7,warmupTolerance:5,uiLoading:'no',uiScanning:'no',uiError:'no'});
-  ({renderer,scene,camera}=mindarThree);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
-  renderer.outputColorSpace=THREE.SRGBColorSpace;
-
-  // TARGET 0 — Chargermovement
-  chargerAnchor=mindarThree.addAnchor(0);chargerGroup=chargerAnchor.group;
-  chargerTexture=new THREE.CanvasTexture(fx);chargerTexture.colorSpace=THREE.SRGBColorSpace;chargerTexture.minFilter=THREE.LinearFilter;chargerTexture.magFilter=THREE.LinearFilter;
-  const chargerMat=new THREE.MeshBasicMaterial({map:chargerTexture,transparent:true,depthTest:false,depthWrite:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide,toneMapped:false});
-  const chargerMesh=new THREE.Mesh(new THREE.PlaneGeometry(1,CHARGER_H),chargerMat);chargerMesh.position.z=.006;chargerMesh.renderOrder=20;chargerAnchor.group.add(chargerMesh);
-  chargerAnchor.onTargetFound=()=>{chargerTracked=true;goldTracked=false;setStatus('Chargermovement reconocida — desplazá la centralidad por la cinta.',true);};
-  chargerAnchor.onTargetLost=()=>{chargerTracked=false;engine.clearCentrality();if(!goldTracked)setStatus('Buscando una de las obras…',false);};
-
-  // TARGET 1 — obra dorada anterior
-  goldAnchor=mindarThree.addAnchor(1);
-  const loader=new THREE.TextureLoader();
-  const [traceTex,glowTex]=await Promise.all([loader.loadAsync('./gold-traces.png'),loader.loadAsync('./gold-glow.png')]);
-  traceTex.colorSpace=THREE.SRGBColorSpace;glowTex.colorSpace=THREE.SRGBColorSpace;
-  goldTraceMaterial=makeGoldMaterial(traceTex,1.42,1.0);goldGlowMaterial=makeGoldMaterial(glowTex,1.72,.74);
-  const goldGeom=new THREE.PlaneGeometry(1,GOLD_H);
-  const glowPlane=new THREE.Mesh(goldGeom,goldGlowMaterial);glowPlane.position.z=.006;glowPlane.scale.set(1.012,1.012,1);
-  goldTracePlane=new THREE.Mesh(goldGeom,goldTraceMaterial);goldTracePlane.position.z=.011;
-  goldAnchor.group.add(glowPlane);goldAnchor.group.add(goldTracePlane);
-  goldAnchor.onTargetFound=()=>{goldTracked=true;chargerTracked=false;engine.clearCentrality();setStatus('Obra anterior reconocida — la centralidad activa los trazos.',true);};
-  goldAnchor.onTargetLost=()=>{goldTracked=false;if(!chargerTracked)setStatus('Buscando una de las obras…',false);};
+class GoldController{
+  constructor(){ this.PRINT_H=28.6/40.5; this.name='Obra anterior'; this.MAX_FOCI=12; this.FOCUS_LIFE=1.45; }
+  async init(){
+    this.mindarThree=new MindARThree({container,imageTargetSrc:'./targetsprevio.mind',filterMinCF:0.001,filterBeta:0.01,missTolerance:7,warmupTolerance:5,uiLoading:'no',uiScanning:'no',uiError:'no'});
+    ({renderer:this.renderer,scene:this.scene,camera:this.camera}=this.mindarThree);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); this.renderer.outputColorSpace=THREE.SRGBColorSpace;
+    this.anchor=this.mindarThree.addAnchor(0); this.tracked=false;
+    const loader=new THREE.TextureLoader();
+    const [traceTex, glowTex]=await Promise.all([loader.loadAsync('./gold-traces.png'), loader.loadAsync('./gold-glow.png')]);
+    traceTex.colorSpace=THREE.SRGBColorSpace; glowTex.colorSpace=THREE.SRGBColorSpace; traceTex.minFilter=THREE.LinearFilter; glowTex.minFilter=THREE.LinearFilter;
+    this.focusPoints=Array.from({length:this.MAX_FOCI},()=>new THREE.Vector2(0.5,0.5));
+    this.focusWeights=new Float32Array(this.MAX_FOCI); this.focusTimes=[]; this.clickUv=new THREE.Vector2(0.5,0.5); this.clickAt=-1000; this.raycaster=new THREE.Raycaster();
+    const vsh=`varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);} `;
+    const fsh=`precision highp float; varying vec2 vUv; uniform sampler2D uTex; uniform float uTime; uniform float uFound; uniform vec2 uClickUv; uniform float uSinceClick; uniform float uGlowGain; uniform float uBaseGain; uniform vec2 uFocusUv[${12}]; uniform float uFocusW[${12}]; float gaussian(float x,float w){return exp(-(x*x)/max(0.0001,w*w));} void main(){ vec4 tex=texture2D(uTex,vUv); if(tex.a<0.008) discard; vec2 aspectUv=vUv; vec2 centered=aspectUv-vec2(0.5); centered.x*=1.415668203; float radial=length(centered); float pathEnergy=0.0; for(int i=0;i<${12};i++){ vec2 d=aspectUv-uFocusUv[i]; d.x*=1.415668203; float dst=length(d); float head=gaussian(dst,0.050+0.010*sin(uTime*1.2+float(i)*0.55)); float halo=gaussian(dst,0.105); float circuit=0.5+0.5*sin(uTime*4.2-dst*34.0+vUv.y*9.0+float(i)*0.45); circuit=pow(circuit,3.5); pathEnergy+=uFocusW[i]*(head*1.45+halo*0.38+circuit*halo*0.68);} vec2 clickDelta=vUv-uClickUv; clickDelta.x*=1.415668203; float clickDist=length(clickDelta); float clickP=clamp(uSinceClick/2.20,0.0,1.0); float clickRadius=clickP*1.16; float clickRing=gaussian(clickDist-clickRadius,0.032+0.016*(1.0-clickP)); clickRing*=(1.0-clickP); float breathing=0.78+0.22*sin(uTime*1.1); float coreSuppression=1.0-smoothstep(0.78,1.05,radial); float energy=uBaseGain*(0.08+pathEnergy*1.05*breathing)*coreSuppression; energy+=clickRing*2.05; energy*=uFound; vec3 warm=tex.rgb*vec3(1.12,1.05,0.92); vec3 color=warm*(1.0+energy*uGlowGain); float alpha=tex.a*clamp(energy,0.0,1.75); gl_FragColor=vec4(color,alpha);} `;
+    const makeMat=(tex,gg,bg)=>new THREE.ShaderMaterial({uniforms:{uTex:{value:tex},uTime:{value:0},uFound:{value:0},uClickUv:{value:this.clickUv.clone()},uSinceClick:{value:999},uGlowGain:{value:gg},uBaseGain:{value:bg},uFocusUv:{value:this.focusPoints},uFocusW:{value:this.focusWeights}},vertexShader:vsh,fragmentShader:fsh,transparent:true,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide});
+    this.traceMaterial=makeMat(traceTex,1.42,1.0); this.glowMaterial=makeMat(glowTex,1.72,0.74);
+    const geometry=new THREE.PlaneGeometry(1,this.PRINT_H);
+    const glowPlane=new THREE.Mesh(geometry,this.glowMaterial); glowPlane.position.z=.006; glowPlane.scale.set(1.012,1.012,1);
+    this.tracePlane=new THREE.Mesh(geometry,this.traceMaterial); this.tracePlane.position.z=.011; this.anchor.group.add(glowPlane); this.anchor.group.add(this.tracePlane);
+    this.anchor.onTargetFound=()=>{ this.tracked=true; status.textContent='Obra anterior reconocida — el centro de pantalla va encendiendo los trazos.'; reticle.style.opacity=.50; card.classList.add('ready'); };
+    this.anchor.onTargetLost=()=>{ this.tracked=false; status.textContent='Buscando nuevamente la obra anterior…'; reticle.style.opacity=.18; card.classList.remove('ready'); };
+    let downX=0,downY=0,downAt=0; this.pointerDown=(e)=>{ downX=e.clientX; downY=e.clientY; downAt=performance.now();}; this.pointerUp=(e)=>{ if(!this.tracked||performance.now()-downAt>420||Math.hypot(e.clientX-downX,e.clientY-downY)>18) return; const pointer=new THREE.Vector2((e.clientX/window.innerWidth)*2-1,-(e.clientY/window.innerHeight)*2+1); this.raycaster.setFromCamera(pointer,this.camera); const hits=this.raycaster.intersectObject(this.tracePlane,false); if(hits.length&&hits[0].uv){ this.clickUv.copy(hits[0].uv); this.clickAt=performance.now()*0.001; this.traceMaterial.uniforms.uClickUv.value.copy(this.clickUv); this.glowMaterial.uniforms.uClickUv.value.copy(this.clickUv);} };
+    container.addEventListener('pointerdown',this.pointerDown); container.addEventListener('pointerup',this.pointerUp);
+  }
+  pushFocus(uv,time){ const last=this.focusTimes.length?this.focusTimes[this.focusTimes.length-1]:null; const lastUv=last?.uv; if(!lastUv||lastUv.distanceTo(uv)>0.012||time-last.time>0.07) this.focusTimes.push({uv:uv.clone(),time}); else { last.uv.copy(uv); last.time=time; } while(this.focusTimes.length>this.MAX_FOCI) this.focusTimes.shift(); }
+  updateFocusUniforms(now){ while(this.focusTimes.length&&now-this.focusTimes[0].time>this.FOCUS_LIFE) this.focusTimes.shift(); for(let i=0;i<this.MAX_FOCI;i++){ if(i<this.focusTimes.length){ const item=this.focusTimes[this.focusTimes.length-1-i]; const age=Math.max(0,now-item.time); const w=Math.pow(Math.max(0,1-age/this.FOCUS_LIFE),1.2); this.focusPoints[i].copy(item.uv); this.focusWeights[i]=w; } else { this.focusPoints[i].set(0.5,0.5); this.focusWeights[i]=0.0; } } }
+  async start(){
+    await this.mindarThree.start(); status.textContent='Apuntá al print completo de la obra anterior.';
+    this.renderer.setAnimationLoop(()=>{ const now=performance.now()*0.001; const sinceClick=Math.max(0,now-this.clickAt); const targetFound=this.tracked?1:0; if(this.tracked&&this.tracePlane){ this.raycaster.setFromCamera(centerNdc,this.camera); const hits=this.raycaster.intersectObject(this.tracePlane,false); if(hits.length&&hits[0].uv) this.pushFocus(hits[0].uv,now); } this.updateFocusUniforms(now); for(const material of [this.traceMaterial,this.glowMaterial]){ material.uniforms.uTime.value=now; material.uniforms.uFound.value += (targetFound-material.uniforms.uFound.value)*0.12; material.uniforms.uSinceClick.value=sinceClick; material.uniforms.uFocusW.value=this.focusWeights; material.uniforms.uFocusUv.value=this.focusPoints; } this.renderer.render(this.scene,this.camera); });
+  }
+  async stop(){ container.removeEventListener('pointerdown',this.pointerDown); container.removeEventListener('pointerup',this.pointerUp); try{ this.renderer?.setAnimationLoop(null);}catch(e){} try{ await this.mindarThree?.stop(); }catch(e){} container.innerHTML=''; reticle.style.opacity=0; }
 }
 
-async function startAR(){
-  if(started)return;started=true;startBtn.disabled=true;setStatus('Iniciando cámara…');
+async function switchMode(mode){
+  if(switching) return; switching=true; setActiveButton(mode); status.textContent='Cambiando modo…'; card.classList.remove('ready');
+  if(activeController){ try{ await activeController.stop(); }catch(e){ console.error(e); } activeController=null; }
   try{
-    await mindarThree.start();
-    startBtn.style.display='none';
-    setStatus('Apuntá a cualquiera de los dos prints completos.',false);
-    renderer.setAnimationLoop(()=>{
-      const now=performance.now()/1000;
-      if(chargerTracked){const p=intersectCharger(0,0);if(p)engine.setCentrality(p.x,p.y,now);else engine.clearCentrality();}
-      else engine.clearCentrality();
-      engine.update(now);chargerTexture.needsUpdate=true;
-
-      if(goldTracked&&goldTracePlane){raycaster.setFromCamera(centerNdc,camera);const hits=raycaster.intersectObject(goldTracePlane,false);if(hits.length&&hits[0].uv)pushFocus(hits[0].uv,now);}
-      updateFocus(now);
-      const sinceClick=Math.max(0,now-clickAt),goldFound=goldTracked?1:0;
-      for(const mat of [goldTraceMaterial,goldGlowMaterial]){mat.uniforms.uTime.value=now;mat.uniforms.uFound.value+=(goldFound-mat.uniforms.uFound.value)*.12;mat.uniforms.uSinceClick.value=sinceClick;}
-      renderer.render(scene,camera);
-    });
-  }catch(err){console.error(err);started=false;startBtn.disabled=false;setStatus('No fue posible iniciar AR.');errorEl.textContent=err?.message||String(err);errorEl.style.display='block';}
+    if(mode==='charger') activeController=new ChargerController(); else activeController=new GoldController();
+    await activeController.init(); await activeController.start();
+  }catch(e){ console.error(e); status.textContent='No se pudo iniciar este modo. Revisá que el archivo .mind correspondiente esté presente.'; }
+  switching=false;
 }
-
-container.addEventListener('pointerdown',e=>{
-  if(!renderer||!camera)return;
-  const r=renderer.domElement.getBoundingClientRect();const x=((e.clientX-r.left)/r.width)*2-1;const y=-(((e.clientY-r.top)/r.height)*2-1);
-  if(chargerTracked){const p=intersectCharger(x,y);if(p)engine.tapAt(p.x,p.y,performance.now()/1000);}
-  else if(goldTracked&&goldTracePlane){raycaster.setFromCamera(new THREE.Vector2(x,y),camera);const hits=raycaster.intersectObject(goldTracePlane,false);if(hits.length&&hits[0].uv){clickUv.copy(hits[0].uv);clickAt=performance.now()/1000;goldTraceMaterial.uniforms.uClickUv.value.copy(clickUv);goldGlowMaterial.uniforms.uClickUv.value.copy(clickUv);}}
-});
-
-try{await verify();await setup();statusEl.textContent='Todo listo. Activá la cámara.';startBtn.style.display='inline-block';}
-catch(err){console.error(err);statusEl.textContent='La experiencia todavía no está lista.';errorEl.textContent=err?.message||String(err);errorEl.style.display='block';}
-startBtn.onclick=startAR;
+btnCharger.onclick=()=>switchMode('charger');
+btnGold.onclick=()=>switchMode('gold');
 </script>
-</body>
-</html>
+</body></html>
