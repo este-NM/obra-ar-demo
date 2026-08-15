@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#000000" />
+  <title>Obra AR — nueva obra azul</title>
+
+  <script>
+    window.addEventListener('error', (event) => {
+      const box = document.querySelector('#error');
+      const status = document.querySelector('#status');
+      if (status) status.textContent = 'Se produjo un error al cargar la experiencia.';
+      if (box) {
+        box.textContent = event.message || 'Error de carga no identificado.';
+        box.style.display = 'block';
+      }
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      const box = document.querySelector('#error');
+      const status = document.querySelector('#status');
+      if (status) status.textContent = 'No se pudo iniciar la experiencia.';
+      if (box) {
+        box.textContent = event.reason?.message || String(event.reason || 'Error no identificado.');
+        box.style.display = 'block';
+      }
+    });
+  </script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+    }
+  }
+  </script>
+
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    #ar-container { position: fixed; inset: 0; overflow: hidden; background: #000; }
+    #ui { position: fixed; inset: 0; z-index: 20; pointer-events: none; color: #fff5df; }
+    #card { position: absolute; left: 14px; right: 14px; top: 14px; max-width: 520px; padding: 12px 14px; border-radius: 15px; background: rgba(0,0,0,.56); border: 1px solid rgba(255,210,125,.22); backdrop-filter: blur(10px); box-sizing: border-box; pointer-events: auto; }
+    #title { font-size: 15px; font-weight: 650; color: #ffd27a; margin-bottom: 5px; }
+    #status { font-size: 13px; line-height: 1.4; opacity: .93; }
+    #start { margin-top: 10px; padding: 11px 15px; border-radius: 999px; border: 1px solid rgba(255,220,160,.28); background: rgba(255,205,110,.16); color: #fff4da; font-size: 14px; display: none; }
+    #start:disabled { opacity: .5; }
+    #hint { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 9px 12px; border-radius: 999px; background: rgba(0,0,0,.46); border: 1px solid rgba(255,220,160,.15); font-size: 12px; white-space: nowrap; opacity: 0; transition: opacity .45s; }
+    #hint.show { opacity: 1; }
+    #center-mark { position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; margin-left: -9px; margin-top: -9px; border-radius: 999px; border: 1px solid rgba(255,245,220,.45); box-shadow: 0 0 0 1px rgba(0,0,0,.35) inset; opacity: .0; transition: opacity .35s; }
+    #center-mark.show { opacity: .38; }
+    #error { margin-top: 8px; color: #ffc5a8; font-size: 12px; line-height: 1.35; display: none; }
+    #details { margin-top: 7px; font-size: 11px; opacity: .7; line-height: 1.35; }
+    #phase { margin-top: 6px; font-size: 12px; color: #ffd27a; opacity: .92; }
+    @media (max-width: 520px) { #card { max-width: none; } }
+  </style>
+</head>
+<body>
+<a href="./index.html" style="position:fixed;z-index:40;right:14px;top:14px;color:#fff;text-decoration:none;background:rgba(0,0,0,.62);border:1px solid rgba(255,220,160,.22);border-radius:999px;padding:8px 11px;font:13px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">← Obras</a>
+  <div id="ar-container"></div>
+  <div id="ui">
+    <div id="card">
+      <div id="title">Nueva obra azul — ser grande y cinco pequeños</div>
+      <div id="status">Comprobando los archivos de reconocimiento…</div>
+      <div id="phase"></div>
+      <button id="start">Activar cámara</button>
+      <div id="error"></div>
+      <div id="details">Fase 1: ser grande con recorrido por centralidad. Fase 2: al acercarte lo suficiente, se habilitan los cinco seres pequeños y la centralidad va recorriéndolos.</div>
+    </div>
+    <div id="hint">Centrá la obra. El punto medio de la pantalla activa los trazos.</div>
+    <div id="center-mark"></div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { MindARThree } from 'mindar-image-three';
+
+    const TARGET_HEIGHT = 60 / 40;
+    const statusEl = document.querySelector('#status');
+    const phaseEl = document.querySelector('#phase');
+    const startBtn = document.querySelector('#start');
+    const errorEl = document.querySelector('#error');
+    const hintEl = document.querySelector('#hint');
+    const centerMark = document.querySelector('#center-mark');
+    const container = document.querySelector('#ar-container');
+
+    let mindarThree, renderer, scene, camera, raycaster, found = false;
+    let largeMat, smallMat, largePlane, smallPlane;
+    let clickAt = -1000;
+    const clickUv = new THREE.Vector2(0.5, 0.5);
+    const centerNdc = new THREE.Vector2(0, 0);
+    const MAX_FOCI = 12;
+    const FOCUS_LIFE = 1.5;
+    const focusPointsLarge = Array.from({length: MAX_FOCI}, () => new THREE.Vector2(0.5, 0.5));
+    const focusWeightsLarge = new Float32Array(MAX_FOCI);
+    const focusTimesLarge = [];
+    const focusPointsSmall = Array.from({length: MAX_FOCI}, () => new THREE.Vector2(0.5, 0.5));
+    const focusWeightsSmall = new Float32Array(MAX_FOCI);
+    const focusTimesSmall = [];
+    const smallCenters = [
+      new THREE.Vector2(0.4391909460, 0.7508755832),
+      new THREE.Vector2(0.2156182204, 0.8024955055),
+      new THREE.Vector2(0.3680855223, 0.8191016253),
+      new THREE.Vector2(0.3063818990, 0.8550525674),
+      new THREE.Vector2(0.1996162102, 0.8891604905)
+    ];
+    const SMALL_BBOX = {x0: 0.16, y0: 0.72, x1: 0.47, y1: 0.94};
+    let closeMode = false;
+
+    const vertexShader = `
+      varying vec2 vUv;
+      void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+    `;
+
+    const fragmentShader = `
+      precision highp float;
+      varying vec2 vUv;
+      uniform sampler2D uTex;
+      uniform float uTime;
+      uniform float uFound;
+      uniform float uIntensity;
+      uniform vec3 uTint;
+      uniform vec2 uClickUv;
+      uniform float uSinceClick;
+      uniform vec2 uFocusUv[${MAX_FOCI}];
+      uniform float uFocusW[${MAX_FOCI}];
+      float gaussian(float x, float width){ return exp(-(x*x)/max(0.0001,width*width)); }
+      void main(){
+        vec4 tex = texture2D(uTex, vUv);
+        float mask = tex.a;
+        if(mask < 0.008) discard;
+        vec2 p = vUv - vec2(0.5);
+        p.x *= 0.808853; // compensate portrait aspect approx 803/994
+        float energy = 0.0;
+        for(int i=0;i<${MAX_FOCI};i++){
+          vec2 d = vUv - uFocusUv[i];
+          d.x *= 0.808853;
+          float dst = length(d);
+          float head = gaussian(dst, 0.045 + 0.010*sin(uTime*1.4 + float(i)*0.43));
+          float halo = gaussian(dst, 0.100);
+          float circuit = 0.5 + 0.5*sin(uTime*4.4 - dst*38.0 + vUv.y*10.0 + float(i)*0.6);
+          circuit = pow(circuit, 3.0);
+          energy += uFocusW[i] * (head*1.28 + halo*0.34 + circuit*halo*0.72);
+        }
+        vec2 dc = vUv - uClickUv;
+        dc.x *= 0.808853;
+        float clickDist = length(dc);
+        float clickP = clamp(uSinceClick / 2.2, 0.0, 1.0);
+        float clickR = clickP * 1.05;
+        float clickRing = gaussian(clickDist - clickR, 0.030 + 0.02*(1.0-clickP));
+        clickRing *= (1.0-clickP);
+        float breathing = 0.78 + 0.22*sin(uTime*1.08);
+        float total = (0.10 + energy * 1.08 * breathing) * uIntensity + clickRing * 2.0;
+        total *= uFound;
+        vec3 color = uTint * (0.24 + total*1.2);
+        float alpha = mask * clamp(total, 0.0, 1.8);
+        gl_FragColor = vec4(color, alpha);
+      }
+    `;
+
+    function makeMaterial(texture, tint){
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uTex: { value: texture },
+          uTime: { value: 0 },
+          uFound: { value: 0 },
+          uIntensity: { value: 1.0 },
+          uTint: { value: tint },
+          uClickUv: { value: clickUv.clone() },
+          uSinceClick: { value: 999 },
+          uFocusUv: { value: focusPointsLarge },
+          uFocusW: { value: focusWeightsLarge }
+        },
+        vertexShader, fragmentShader,
+        transparent: true, depthWrite: false, depthTest: false,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+      });
+    }
+
+    async function verifyRequiredFiles() {
+      const required = ['./target_obra3.mind', './obra3_ser_grande.png', './obra3_seres_pequenos.png'];
+      for (const url of required) {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Falta ${url.replace('./','')} en la raíz del repositorio.`);
+      }
+    }
+
+    function pushFocus(list, uv, time){
+      const last = list.length ? list[list.length-1] : null;
+      const lastUv = last?.uv;
+      if(!lastUv || lastUv.distanceTo(uv) > 0.012 || time - last.time > 0.07) list.push({ uv: uv.clone(), time });
+      else { last.uv.copy(uv); last.time = time; }
+      while(list.length > MAX_FOCI) list.shift();
+    }
+
+    function updateFocusUniforms(store, pts, wts, now){
+      while(store.length && now - store[0].time > FOCUS_LIFE) store.shift();
+      for(let i=0;i<MAX_FOCI;i++){
+        if(i < store.length){
+          const item = store[store.length-1-i];
+          const age = Math.max(0, now - item.time);
+          const w = Math.pow(Math.max(0, 1 - age / FOCUS_LIFE), 1.2);
+          pts[i].copy(item.uv); wts[i] = w;
+        } else { pts[i].set(0.5,0.5); wts[i] = 0.0; }
+      }
+    }
+
+    function projectTargetHeightFraction(group, cam){
+      const pts = [
+        new THREE.Vector3(-0.5, -TARGET_HEIGHT/2, 0),
+        new THREE.Vector3(-0.5, TARGET_HEIGHT/2, 0),
+        new THREE.Vector3(0.5, -TARGET_HEIGHT/2, 0),
+        new THREE.Vector3(0.5, TARGET_HEIGHT/2, 0),
+      ];
+      const projected = pts.map(p => p.clone().applyMatrix4(group.matrixWorld).project(cam));
+      const ys = projected.map(p => p.y);
+      return Math.abs(Math.max(...ys) - Math.min(...ys)) / 2.0; // 0..1-ish fraction of full screen height
+    }
+
+    function setPhaseText(){
+      phaseEl.textContent = closeMode
+        ? 'Fase activa: cerca. Se habilitó el grupo de cinco seres pequeños.'
+        : 'Fase activa: media/lejana. Se destaca el ser grande.';
+    }
+
+    function nearestSmall(uv){
+      let best = null, bd = 1e9;
+      for(const c of smallCenters){
+        const dx = (uv.x - c.x) * 0.808853;
+        const dy = (uv.y - c.y);
+        const d = Math.hypot(dx, dy);
+        if(d < bd){ bd = d; best = c; }
+      }
+      return { center: best, dist: bd };
+    }
+
+    async function setupAR(){
+      mindarThree = new MindARThree({
+        container,
+        imageTargetSrc: './target_obra3.mind',
+        filterMinCF: 0.001,
+        filterBeta: 0.01,
+        missTolerance: 8,
+        warmupTolerance: 5,
+        uiLoading: 'no', uiScanning: 'no', uiError: 'no'
+      });
+      ({ renderer, scene, camera } = mindarThree);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      raycaster = new THREE.Raycaster();
+
+      const anchor = mindarThree.addAnchor(0);
+      const loader = new THREE.TextureLoader();
+      const [largeTex, smallTex] = await Promise.all([
+        loader.loadAsync('./obra3_ser_grande.png'),
+        loader.loadAsync('./obra3_seres_pequenos.png')
+      ]);
+      largeTex.minFilter = smallTex.minFilter = THREE.LinearFilter;
+      largeTex.magFilter = smallTex.magFilter = THREE.LinearFilter;
+
+      largeMat = makeMaterial(largeTex, new THREE.Color(1.0, 0.94, 0.82));
+      smallMat = makeMaterial(smallTex, new THREE.Color(0.98, 0.98, 1.0));
+      smallMat.uniforms.uIntensity.value = 0.0;
+      smallMat.uniforms.uFocusUv.value = focusPointsSmall;
+      smallMat.uniforms.uFocusW.value = focusWeightsSmall;
+
+      const geom = new THREE.PlaneGeometry(1, TARGET_HEIGHT);
+      largePlane = new THREE.Mesh(geom, largeMat); largePlane.position.z = 0.010;
+      smallPlane = new THREE.Mesh(geom, smallMat); smallPlane.position.z = 0.013;
+      anchor.group.add(largePlane); anchor.group.add(smallPlane);
+
+      anchor.onTargetFound = () => { found = true; statusEl.textContent = 'Obra reconocida — mové la centralidad por la superficie.'; hintEl.classList.remove('show'); centerMark.classList.add('show'); setPhaseText(); };
+      anchor.onTargetLost = () => { found = false; statusEl.textContent = 'Se perdió el seguimiento. Reencuadrá la obra.'; phaseEl.textContent = ''; hintEl.classList.add('show'); centerMark.classList.remove('show'); };
+
+      let downX=0, downY=0, downAt=0;
+      container.addEventListener('pointerdown', (e) => { downX = e.clientX; downY = e.clientY; downAt = performance.now(); });
+      container.addEventListener('pointerup', (e) => {
+        if(!found || performance.now()-downAt > 420 || Math.hypot(e.clientX-downX, e.clientY-downY) > 18) return;
+        const pointer = new THREE.Vector2((e.clientX/window.innerWidth)*2 - 1, -(e.clientY/window.innerHeight)*2 + 1);
+        raycaster.setFromCamera(pointer, camera);
+        const hits = raycaster.intersectObject(closeMode ? smallPlane : largePlane, false);
+        if(hits.length && hits[0].uv){
+          clickUv.copy(hits[0].uv); clickAt = performance.now() * 0.001;
+          for(const m of [largeMat, smallMat]) m.uniforms.uClickUv.value.copy(clickUv);
+        }
+      });
+
+      anchor.group.updateWorldMatrix(true, false);
+      setPhaseText();
+      return anchor;
+    }
+
+    async function initialize(){
+      try{
+        if(!window.isSecureContext) throw new Error('La cámara requiere una página HTTPS.');
+        await verifyRequiredFiles();
+        await setupAR();
+        statusEl.textContent = 'Todo listo. Compilá target_obra3.jpg en MindAR, subilo como target_obra3.mind y luego activá la cámara.';
+        startBtn.style.display = 'inline-block';
+      }catch(error){
+        console.error(error);
+        statusEl.textContent = 'La experiencia todavía no está lista.';
+        errorEl.textContent = error?.message || String(error);
+        errorEl.style.display = 'block';
+      }
+    }
+
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true; statusEl.textContent = 'Solicitando acceso a la cámara…';
+      try{
+        await mindarThree.start();
+        startBtn.style.display = 'none'; hintEl.classList.add('show'); centerMark.classList.add('show');
+        statusEl.textContent = 'Apuntá a la obra completa. Al acercarte suficiente se activarán los cinco pequeños.';
+        renderer.setAnimationLoop(() => {
+          const now = performance.now() * 0.001;
+          const targetFound = found ? 1 : 0;
+          const sinceClick = Math.max(0, now - clickAt);
+
+          if(found && largePlane){
+            const frac = projectTargetHeightFraction(largePlane.parent, camera);
+            closeMode = frac > 0.47;
+            setPhaseText();
+            raycaster.setFromCamera(centerNdc, camera);
+            const plane = closeMode ? smallPlane : largePlane;
+            const hits = raycaster.intersectObject(plane, false);
+            if(hits.length && hits[0].uv){
+              const uv = hits[0].uv;
+              pushFocus(focusTimesLarge, uv, now);
+              if(closeMode){
+                if(uv.x > SMALL_BBOX.x0 && uv.x < SMALL_BBOX.x1 && uv.y > SMALL_BBOX.y0 && uv.y < SMALL_BBOX.y1){
+                  const ns = nearestSmall(uv);
+                  if(ns.dist < 0.085) pushFocus(focusTimesSmall, ns.center, now);
+                }
+              }
+            }
+          }
+          updateFocusUniforms(focusTimesLarge, focusPointsLarge, focusWeightsLarge, now);
+          updateFocusUniforms(focusTimesSmall, focusPointsSmall, focusWeightsSmall, now);
+
+          largeMat.uniforms.uTime.value = now;
+          largeMat.uniforms.uFound.value += (targetFound - largeMat.uniforms.uFound.value) * 0.12;
+          largeMat.uniforms.uSinceClick.value = sinceClick;
+          largeMat.uniforms.uIntensity.value = closeMode ? 0.62 : 1.0;
+
+          smallMat.uniforms.uTime.value = now;
+          smallMat.uniforms.uFound.value += (targetFound - smallMat.uniforms.uFound.value) * 0.12;
+          smallMat.uniforms.uSinceClick.value = sinceClick;
+          const targetIntensity = closeMode ? 1.0 : 0.0;
+          smallMat.uniforms.uIntensity.value += (targetIntensity - smallMat.uniforms.uIntensity.value) * 0.08;
+
+          renderer.render(scene, camera);
+        });
+      }catch(error){
+        console.error(error);
+        startBtn.disabled = false;
+        statusEl.textContent = 'No se pudo iniciar la cámara.';
+        errorEl.textContent = error?.message || 'Revisá el permiso de cámara y recargá la página.';
+        errorEl.style.display = 'block';
+      }
+    });
+
+    initialize();
+  </script>
+</body>
+</html>
