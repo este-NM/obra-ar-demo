@@ -303,7 +303,27 @@
       if(this.headS!==null && this.history.length){
         const [px,py]=this.path.pointAt(this.headS);
         const [tx,ty]=this.path.tangentAt(this.headS);
-        const x=px*w,y=py*h,ang=Math.atan2(ty,tx);
+        const len = Math.hypot(tx,ty) || 1;
+
+// vector perpendicular al riel
+const nx = -ty / len;
+const ny =  tx / len;
+
+// cantidad máxima de desplazamiento
+const vibrationPx = 5.0;
+
+// vibración irregular: varias frecuencias superpuestas
+const vibration =
+  vibrationPx * (
+    0.60 * Math.sin(TAU * 7.3  * time + this.headS * 31.0) +
+    0.28 * Math.sin(TAU * 11.1 * time + this.headS * 53.0) +
+    0.12 * Math.sin(TAU * 16.7 * time + this.headS * 79.0)
+  );
+
+const x = px*w + nx*vibration;
+const y = py*h + ny*vibration;
+
+const ang = Math.atan2(ty,tx);
         const occ=occlusionFactor(this.headS);
         const pulse=0.86+0.14*Math.sin(time*8.4);
         const stretch=clamp(1.0+this.velS*0.55,1.0,1.7);
