@@ -350,8 +350,8 @@
 
       this._buildVeinIllumination(time);
       if(this.veinsReady){
-        const flickerHz = 12.0;
-        const flickerDepth = 0.60;
+        const flickerHz = 3.0;
+        const flickerDepth = 1.0;
         
         const lfo = 0.5 + 0.5 * Math.sin(TAU * flickerHz * time);
         const flicker = mix(1.0 - flickerDepth, 1.0, lfo);
