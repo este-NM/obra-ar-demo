@@ -246,7 +246,7 @@
         this.velS *= 0.92;
       }
 
-      this.history = this.history.filter(h => time - h.t < 1.7);
+      this.history = this.history.filter(h => time - h.t < 2.3);
       this.propagations = this.propagations.filter(p => time - p.t0 < 2.8);
       this.render(time);
     }
@@ -289,7 +289,7 @@
       // invisible activation field coupled to the vector, visible content comes from the artwork traces.
       for(const q of this.history){
         const age=time-q.t;
-        const life=clamp(1-age/1.7,0,1);
+        const life=clamp(1-age/2.3,0,1);
         if(life<=0) continue;
         const [px,py]=this.path.pointAt(q.s);
         const [tx,ty]=this.path.tangentAt(q.s);
