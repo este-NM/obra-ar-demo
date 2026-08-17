@@ -310,7 +310,7 @@ const nx = -ty / len;
 const ny =  tx / len;
 
 // cantidad máxima de desplazamiento
-const vibrationPx = 5.0;
+const vibrationPx = 8.0;
 
 // vibración irregular: varias frecuencias superpuestas
 const vibration =
