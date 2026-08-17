@@ -236,17 +236,31 @@
         } else {
           this.velS *= 0.90;
         }
-        this.history.push({
-          s: this.headS,
-          t: time,
-          energy: mix(0.56, 1.0, Math.max(this.inputStrength, 0.2)),
-          speed: this.velS
-        });
+        const resonating = this.history.some(q => {
+  const age = time - q.t;
+
+  return (
+    age > 0.35 &&
+    Math.abs(cdelta(q.s, this.headS)) < 0.012
+  );
+});
+
+this.history.push({
+  s: this.headS,
+  t: time,
+  energy: mix(0.56, 1.0, Math.max(this.inputStrength, 0.2)),
+  speed: this.velS,
+
+  resonance: resonating ? 1.0 : 0.0,
+  life: resonating ? 3.1 : 2.3
+});
       } else {
         this.velS *= 0.92;
       }
 
-      this.history = this.history.filter(h => time - h.t < 2.3);
+      this.history = this.history.filter(
+  h => time - h.t < (h.life ?? 2.3)
+);
       this.propagations = this.propagations.filter(p => time - p.t0 < 2.8);
       this.render(time);
     }
@@ -289,14 +303,25 @@
       // invisible activation field coupled to the vector, visible content comes from the artwork traces.
       for(const q of this.history){
         const age=time-q.t;
-        const life=clamp(1-age/2.3,0,1);
+        const life = clamp(
+  1 - age / (q.life ?? 2.3),
+  0,
+  1
+);
         if(life<=0) continue;
         const [px,py]=this.path.pointAt(q.s);
         const [tx,ty]=this.path.tangentAt(q.s);
         const x=px*w,y=py*h,ang=Math.atan2(ty,tx);
         const occ=occlusionFactor(q.s);
         const stretch=clamp(0.88+q.speed*0.52,0.9,1.55);
-        const a=life*q.energy*this.activity*occ;
+        const resonanceGain = 1.0 + 0.18 * (q.resonance ?? 0.0);
+
+const a =
+  life *
+  q.energy *
+  this.activity *
+  occ *
+  resonanceGain;
         this._veinPulseNode(m, x, y, ang, 54*stretch*(0.72+0.28*life), 36*(0.72+0.26*life), 0.44*a);
       }
 
