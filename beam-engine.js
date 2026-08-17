@@ -350,16 +350,21 @@
 
       this._buildVeinIllumination(time);
       if(this.veinsReady){
+        const flickerHz = 12.0;
+        const flickerDepth = 0.60;
+        
+        const lfo = 0.5 + 0.5 * Math.sin(TAU * flickerHz * time);
+        const flicker = mix(1.0 - flickerDepth, 1.0, lfo);
         ctx.save();
         ctx.globalCompositeOperation='screen';
-        ctx.globalAlpha=0.70;
+        ctx.globalAlpha=0.70 * flicker;
         ctx.filter='blur(13px)';
         ctx.drawImage(this.veinLit,0,0,w,h);
         ctx.filter='blur(5px)';
-        ctx.globalAlpha=0.60;
+        ctx.globalAlpha=0.60 * flicker;
         ctx.drawImage(this.veinLit,0,0,w,h);
         ctx.filter='none';
-        ctx.globalAlpha=0.96;
+        ctx.globalAlpha=0.96 * flicker;
         ctx.drawImage(this.veinLit,0,0,w,h);
         ctx.restore();
       } else {
