@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#000000" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>Obra simétrica integrada — AR experimental</title>
+
+    <script>
+      function showBootError(message) {
+        const status = document.querySelector("#status");
+        const error = document.querySelector("#error");
+        if (status) status.textContent = "No se pudo preparar la experiencia AR.";
+        if (error) {
+          error.textContent = message || "Error de carga no identificado.";
+          error.hidden = false;
+        }
+      }
+      window.addEventListener("error", (event) => showBootError(event.message));
+      window.addEventListener("unhandledrejection", (event) =>
+        showBootError(event.reason?.message || String(event.reason || "Error no identificado.")),
+      );
+    </script>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./vendor/three/three.module.js",
+          "three/addons/": "./vendor/three/addons/",
+          "mindar-image-three": "./vendor/mindar/mindar-image-three.prod.js"
+        }
+      }
+    </script>
+
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #000;
+        color: #fff4d8;
+      }
+
+      * { box-sizing: border-box; }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+      }
+
+      #ar-container {
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+        background: #000;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      #ar-container > video,
+      #ar-container > canvas {
+        position: absolute;
+        inset: 0;
+      }
+
+      #start-panel {
+        position: fixed;
+        z-index: 30;
+        left: max(12px, env(safe-area-inset-left));
+        right: max(12px, env(safe-area-inset-right));
+        bottom: max(16px, env(safe-area-inset-bottom));
+        max-width: 430px;
+        padding: 12px 14px;
+        border: 1px solid rgba(255, 218, 137, 0.22);
+        border-radius: 15px;
+        background: rgba(3, 3, 2, 0.78);
+        backdrop-filter: blur(12px);
+        transition: opacity 180ms ease;
+      }
+
+      #start-panel[data-started="true"] {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #status {
+        font-size: 13px;
+        line-height: 1.35;
+        color: rgba(255, 244, 218, 0.88);
+      }
+
+      #start {
+        width: 100%;
+        min-height: 42px;
+        margin-top: 10px;
+        border: 1px solid rgba(255, 220, 150, 0.28);
+        border-radius: 999px;
+        background: rgba(255, 204, 100, 0.14);
+        color: #fff4da;
+        font: inherit;
+        font-size: 14px;
+      }
+
+      #start:disabled { opacity: 0.48; }
+
+      #error {
+        margin-top: 8px;
+        color: #ffc5a8;
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      #diagnostics {
+        position: fixed;
+        z-index: 40;
+        top: max(10px, env(safe-area-inset-top));
+        right: max(10px, env(safe-area-inset-right));
+        width: min(310px, calc(100vw - 20px));
+        max-height: min(72vh, 520px);
+        overflow: auto;
+        border: 1px solid rgba(255, 215, 128, 0.2);
+        border-radius: 13px;
+        background: rgba(4, 3, 1, 0.72);
+        backdrop-filter: blur(12px);
+      }
+
+      #diagnostics summary {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 36px;
+        padding: 8px 10px;
+        cursor: pointer;
+        list-style: none;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        color: rgba(255, 238, 199, 0.76);
+      }
+
+      #diagnostics summary::-webkit-details-marker { display: none; }
+      #diagnostics summary::before { content: "▸"; color: #e6b75d; }
+      #diagnostics[open] summary::before { content: "▾"; }
+
+      #tracking-badge {
+        margin-left: auto;
+        color: rgba(255, 239, 205, 0.54);
+      }
+
+      #tracking-badge[data-found="true"] { color: #ffe0a0; }
+
+      .diagnostic-grid {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 4px 10px;
+        padding: 9px 10px 10px;
+        margin: 0;
+        border-top: 1px solid rgba(255, 219, 145, 0.1);
+        font-size: 10px;
+        line-height: 1.35;
+      }
+
+      .diagnostic-grid dt {
+        color: rgba(255, 237, 196, 0.43);
+        text-transform: uppercase;
+        letter-spacing: 0.045em;
+      }
+
+      .diagnostic-grid dd {
+        margin: 0;
+        color: rgba(255, 247, 227, 0.86);
+        overflow-wrap: anywhere;
+      }
+
+      #center-mark {
+        position: fixed;
+        z-index: 20;
+        left: 50%;
+        top: 50%;
+        width: 16px;
+        height: 16px;
+        border: 1px solid rgba(255, 245, 220, 0.5);
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 0 12px rgba(255, 214, 125, 0.24);
+        opacity: 0.18;
+        pointer-events: none;
+        transition: opacity 180ms ease;
+      }
+
+      #center-mark[data-found="true"] { opacity: 0.58; }
+
+      #tracking-hint {
+        position: fixed;
+        z-index: 20;
+        left: 50%;
+        bottom: max(18px, env(safe-area-inset-bottom));
+        max-width: calc(100vw - 28px);
+        margin: 0;
+        padding: 8px 11px;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.5);
+        font-size: 11px;
+        line-height: 1.25;
+        text-align: center;
+        color: rgba(255, 239, 205, 0.7);
+        transform: translateX(-50%);
+        pointer-events: none;
+      }
+
+      @media (max-width: 540px) {
+        #diagnostics { width: min(280px, calc(100vw - 20px)); }
+        #diagnostics:not([open]) { width: auto; }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="ar-container" aria-label="Obra simétrica integrada en realidad aumentada"></main>
+
+    <div id="center-mark" data-found="false" aria-hidden="true"></div>
+    <p id="tracking-hint">Activá la cámara y encuadrá el print completo.</p>
+
+    <section id="start-panel" data-started="false" aria-label="Inicio de la experiencia AR">
+      <div id="status" role="status">Comprobando target y recursos visuales…</div>
+      <button id="start" type="button" disabled>Activar cámara</button>
+      <div id="error" role="alert" hidden></div>
+    </section>
+
+    <details id="diagnostics">
+      <summary>
+        AR DIAGNÓSTICO
+        <span id="tracking-badge" data-found="false">not-started</span>
+      </summary>
+      <dl class="diagnostic-grid">
+        <dt>Tracking</dt><dd id="diag-tracking">not-started</dd>
+        <dt>CURRENT</dt><dd id="diag-current">—</dd>
+        <dt>IMPLICATED</dt><dd id="diag-implicated">—</dd>
+        <dt>CURRENT submode</dt><dd id="diag-current-submode">—</dd>
+        <dt>Active traversal</dt><dd id="diag-active">—</dd>
+        <dt>Operational relation</dt><dd id="diag-relation">—</dd>
+        <dt>Effective expression</dt><dd id="diag-expression">—</dd>
+        <dt>Latent source</dt><dd id="diag-latent-source">—</dd>
+        <dt>Kinetic carry source</dt><dd id="diag-kinetic-source">—</dd>
+        <dt>Filtered motion</dt><dd id="diag-motion">0.000</dd>
+        <dt>Central UV</dt><dd id="diag-uv">—</dd>
+        <dt>Hold state</dt><dd id="diag-hold">none</dd>
+      </dl>
+    </details>
+
+    <script type="module" src="./integrated-ar-simulator.js"></script>
+  </body>
+</html>
