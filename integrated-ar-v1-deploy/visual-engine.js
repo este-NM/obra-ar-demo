@@ -191,9 +191,10 @@ const effectsByType = {
 };
 
 export class VisualEngine {
-  constructor(canvas, config, images) {
+  constructor(canvas, config, images, { renderBaseImage = true } = {}) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext("2d", { alpha: false });
+    this.renderBaseImage = renderBaseImage;
+    this.ctx = canvas.getContext("2d", { alpha: !renderBaseImage });
     this.config = config;
     this.images = images;
     this.mode = "CURRENT";
@@ -282,21 +283,24 @@ export class VisualEngine {
 
   render(time, { phase = null } = {}) {
     const { width, height } = this.canvas;
-    const { breathingFrequency, breathingDepth, scaleFrequency, scaleDepth } =
-      this.config.baseImage;
-    const baseBreath = 1 + breathingDepth * Math.sin(TAU * breathingFrequency * time);
-    const baseScale =
-      1 + scaleDepth * (0.5 + 0.5 * Math.sin(TAU * scaleFrequency * time));
     this.ctx.save();
     this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.ctx.globalAlpha = 1;
     this.ctx.globalCompositeOperation = "source-over";
     this.ctx.filter = "none";
     this.ctx.clearRect(0, 0, width, height);
-    this.ctx.filter = `brightness(${baseBreath})`;
-    this.ctx.translate(width / 2, height / 2);
-    this.ctx.scale(baseScale, baseScale);
-    this.ctx.drawImage(this.images.original, -width / 2, -height / 2, width, height);
+
+    if (this.renderBaseImage) {
+      const { breathingFrequency, breathingDepth, scaleFrequency, scaleDepth } =
+        this.config.baseImage;
+      const baseBreath = 1 + breathingDepth * Math.sin(TAU * breathingFrequency * time);
+      const baseScale =
+        1 + scaleDepth * (0.5 + 0.5 * Math.sin(TAU * scaleFrequency * time));
+      this.ctx.filter = `brightness(${baseBreath})`;
+      this.ctx.translate(width / 2, height / 2);
+      this.ctx.scale(baseScale, baseScale);
+      this.ctx.drawImage(this.images.original, -width / 2, -height / 2, width, height);
+    }
     this.ctx.restore();
 
     if (this.mode === "CURRENT") {

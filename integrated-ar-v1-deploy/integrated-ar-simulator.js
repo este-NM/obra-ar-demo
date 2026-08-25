@@ -134,7 +134,9 @@ async function initializeCompositeRenderer() {
   const compositeHeight = Math.round(
     COMPOSITE_WIDTH * (images.original.naturalHeight / images.original.naturalWidth),
   );
-  visualEngine = new VisualEngine(compositeCanvas, visualConfig, images);
+  visualEngine = new VisualEngine(compositeCanvas, visualConfig, images, {
+    renderBaseImage: false,
+  });
   visualEngine.resize(COMPOSITE_WIDTH, compositeHeight);
 
   currentEffect = new CurrentCentralityEffect(currentCanvas, visualConfig.current);
@@ -336,7 +338,7 @@ async function setupAR() {
 
   const material = new THREE.MeshBasicMaterial({
     map: outputTexture,
-    transparent: false,
+    transparent: true,
     depthTest: false,
     depthWrite: false,
     side: THREE.DoubleSide,
