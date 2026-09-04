@@ -118,12 +118,25 @@ export const visualConfig = {
   },
 
   ent2: {
-    type: "glowLfo",
-    // Ciclos de respiración por segundo.
-    frequency: 0.45,
-    // Intensidad mínima del glow.
-    glowMin: 0.3,
-    // Intensidad máxima del glow.
-    glowMax: 0.85,
+    type: "circulatingGlow",
+    // Una vuelta completa de cada circulación cada 7.1 segundos.
+    frequency: 0.14,
+    // Presencia neutra del dibujo entre circulaciones; no genera halo global.
+    baseOpacity: 0.035,
+    // Radio de cada frente luminoso como fracción del ancho de la obra.
+    packetRadius: 0.072,
+    // Cola corta que permite leer el sentido de circulación.
+    trailSamples: 7,
+    trailStep: 0.018,
+    trailDecay: 0.7,
+    glow: 0.96,
+    blur: 16,
+    // Recorridos elípticos normalizados sobre los cuatro campos de ent2.
+    circulations: [
+      { centerX: 0.286, centerY: 0.315, radiusX: 0.12, radiusY: 0.185, direction: 1, phase: 0 },
+      { centerX: 0.714, centerY: 0.315, radiusX: 0.12, radiusY: 0.185, direction: -1, phase: 0 },
+      { centerX: 0.385, centerY: 0.7, radiusX: 0.082, radiusY: 0.14, direction: -1, phase: 0.45 },
+      { centerX: 0.615, centerY: 0.7, radiusX: 0.082, radiusY: 0.14, direction: 1, phase: 0.45 },
+    ],
   },
 };

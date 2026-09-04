@@ -183,11 +183,71 @@ export function glowLfo(layer, config, frame) {
   };
 }
 
+function drawCirculationPacket(ctx, x, y, radius, opacity) {
+  const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+  gradient.addColorStop(0, `rgba(255, 255, 255, ${opacity})`);
+  gradient.addColorStop(0.34, `rgba(255, 255, 255, ${opacity * 0.82})`);
+  gradient.addColorStop(0.72, `rgba(255, 255, 255, ${opacity * 0.24})`);
+  gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+}
+
+export function circulatingGlow(layer, config, frame) {
+  const { ctx, width, height, time, buffers } = frame;
+  // Es deliberadamente visual y continua: no modifica ni consume fase estructural.
+  const cycle = resolveVisualCycle(time, config.frequency);
+  const buffer = buffers.effect;
+  const bufferCtx = buffers.effectCtx;
+  const packetRadius = width * config.packetRadius;
+
+  bufferCtx.save();
+  bufferCtx.setTransform(1, 0, 0, 1, 0, 0);
+  bufferCtx.clearRect(0, 0, width, height);
+  bufferCtx.globalAlpha = 1;
+  bufferCtx.globalCompositeOperation = "lighter";
+  bufferCtx.filter = "none";
+
+  for (const circulation of config.circulations) {
+    const direction = circulation.direction < 0 ? -1 : 1;
+    const head = circulation.phase + cycle * direction;
+
+    for (let index = config.trailSamples - 1; index >= 0; index -= 1) {
+      const progress = head - index * config.trailStep * direction;
+      const angle = TAU * progress;
+      const x = width * (circulation.centerX + Math.cos(angle) * circulation.radiusX);
+      const y = height * (circulation.centerY + Math.sin(angle) * circulation.radiusY);
+      const decay = Math.pow(config.trailDecay, index);
+      const radius = packetRadius * (1 - (index / config.trailSamples) * 0.22);
+      drawCirculationPacket(bufferCtx, x, y, radius, decay);
+    }
+  }
+
+  // La iluminación sólo sobrevive donde existe alpha de las trazas de ent2.
+  bufferCtx.globalCompositeOperation = "source-in";
+  bufferCtx.drawImage(layer, 0, 0, width, height);
+  bufferCtx.restore();
+
+  const blur = Math.max(2, (width / 1260) * config.blur);
+  drawCentered(ctx, layer, width, height, 1, 1, config.baseOpacity);
+  drawCentered(ctx, buffer, width, height, 1, 1, config.glow * 0.52, blur);
+  drawCentered(ctx, buffer, width, height, 1, 1, config.glow);
+
+  return {
+    type: config.type,
+    phase: cycle,
+    circulations: config.circulations.length,
+    litMode: "localized-packets",
+    source: "layer-alpha",
+  };
+}
+
 const effectsByType = {
   axisSweep,
   aura,
   convergingGlow,
   glowLfo,
+  circulatingGlow,
 };
 
 export class VisualEngine {
