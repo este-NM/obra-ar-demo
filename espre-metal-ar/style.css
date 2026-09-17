@@ -1,0 +1,34 @@
+:root { color-scheme: dark; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#ebe9df; background:#171914; }
+* { box-sizing:border-box; }
+body { margin:0; }
+main { max-width:1200px; margin:auto; padding:26px 24px 32px; }
+header { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:22px; }
+.eyebrow { font-size:10px; letter-spacing:.18em; color:#b8af8c; }
+h1 { font-size:clamp(22px,3vw,34px); font-weight:450; letter-spacing:-.035em; margin:6px 0 0; }
+.tag { font-size:9px; letter-spacing:.1em; border:1px solid #4c503f; padding:8px 11px; border-radius:20px; white-space:nowrap; }
+#preview { aspect-ratio:3071/1572; background:#fff8f1; border-radius:4px; overflow:hidden; }
+#preview canvas { width:100%; height:100%; display:block; }
+.controls { padding-top:24px; max-width:650px; margin:auto; }
+.intro { text-align:center; margin-bottom:18px; }
+.intro p { font-size:14px; margin:7px 0; color:#c7c7ba; }
+.row { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+button { font:inherit; font-size:13px; border:1px solid #555947; color:#e8e6d9; background:transparent; border-radius:24px; padding:11px 20px; min-height:44px; cursor:pointer; }
+button[aria-pressed=true] { background:#d9c899; color:#22251a; border-color:#d9c899; }
+button.primary { background:#d9c899; color:#22251a; border-color:#d9c899; }
+button:disabled { opacity:.45; cursor:wait; }
+button:focus-visible,input:focus-visible { outline:2px solid #f9e9b9; outline-offset:4px; }
+.sliders { display:grid; grid-template-columns:1fr 1fr; gap:30px; margin:22px 0; }
+label { font-size:12px; color:#c7c7ba; }
+output { float:right; color:#ede8d6; font-variant-numeric:tabular-nums; }
+input { width:100%; margin:14px 0 0; accent-color:#dac995; min-height:24px; }
+#status,#error { font-size:12px; line-height:1.45; text-align:center; color:#aaa99c; }
+#error { color:#ffb394; }
+[hidden] { display:none!important; }
+#ar { position:fixed; inset:0; z-index:10; }
+#ar>video,#ar>canvas { position:absolute; inset:0; }
+body.ar-active { background:transparent; }
+body.ar-active header,body.ar-active #preview,body.ar-active .intro { display:none; }
+body.ar-active .controls { position:fixed; z-index:30; left:12px; right:12px; bottom:max(12px,env(safe-area-inset-bottom)); border:1px solid #ffffff26; border-radius:16px; padding:14px; background:#11170fda; backdrop-filter:blur(12px); }
+body.ar-active .sliders { margin:12px 0; }
+.tracking { position:fixed; z-index:30; top:max(14px,env(safe-area-inset-top)); left:50%; transform:translateX(-50%); width:max-content; max-width:90vw; padding:10px 16px; border-radius:24px; background:#11170fcc; font-size:12px; text-align:center; }
+@media(max-width:600px) { main { padding:18px 12px; } header { margin-bottom:18px; } .tag { font-size:8px; } .sliders { gap:18px; } .controls { padding-top:20px; } }
