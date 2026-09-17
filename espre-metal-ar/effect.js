@@ -1,18 +1,59 @@
 import * as THREE from 'three';
 
 // The magenta PNG is a raster path mask, never a visible colored layer.
-export const effectSettings = { duration: 6, rest: 1.2, intensity: 0.8, bandWidth: 0.135 };
+export const effectSettings = { duration: 6, rest: 1.2, intensity: 0.8, bandWidth: 0.24,
+  traceRadius: 24, haloRadius: 65 }; // Radii in original PNG pixels.
 export const finishes = {
   gold: { color: '#efc45d', highlight: '#fff7d9' },
   silver: { color: '#9cbbd2', highlight: '#f4fcff' },
   copper: { color: '#d78a57', highlight: '#ffe2bd' },
 };
 
+// Build the widened light field once, not with dozens of samples each AR frame.
+const fields = new WeakMap();
+function lightField(mask) {
+  if (fields.has(mask)) return fields.get(mask);
+  const w = 1536, h = Math.round(mask.image.height * w / mask.image.width);
+  const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d', {willReadFrequently:true});
+  ctx.drawImage(mask.image, 0, 0, w, h);
+  const source = ctx.getImageData(0, 0, w, h).data;
+  const distance = new Float32Array(w * h); distance.fill(10000);
+  for (let i = 0; i < distance.length; i++) {
+    const p = i * 4;
+    if (source[p+3] > 12 && Math.min(source[p],source[p+2])-source[p+1] > 30) distance[i] = 0;
+  }
+  for (let y=0;y<h;y++) for(let x=0;x<w;x++) {
+    const i=y*w+x;
+    if(x) distance[i]=Math.min(distance[i],distance[i-1]+1);
+    if(y) distance[i]=Math.min(distance[i],distance[i-w]+1);
+    if(x&&y) distance[i]=Math.min(distance[i],distance[i-w-1]+Math.SQRT2);
+    if(x<w-1&&y) distance[i]=Math.min(distance[i],distance[i-w+1]+Math.SQRT2);
+  }
+  for (let y=h-1;y>=0;y--) for(let x=w-1;x>=0;x--) {
+    const i=y*w+x;
+    if(x<w-1) distance[i]=Math.min(distance[i],distance[i+1]+1);
+    if(y<h-1) distance[i]=Math.min(distance[i],distance[i+w]+1);
+    if(x<w-1&&y<h-1) distance[i]=Math.min(distance[i],distance[i+w+1]+Math.SQRT2);
+    if(x&&y<h-1) distance[i]=Math.min(distance[i],distance[i+w-1]+Math.SQRT2);
+  }
+  const data=new Uint8Array(w*h*4), ratio=w/mask.image.width;
+  for(let i=0;i<distance.length;i++) {
+    const d=distance[i]/ratio;
+    data[i*4]=Math.round(255*(1-Math.min(1,Math.max(0,(d-effectSettings.traceRadius*.65)/(effectSettings.traceRadius*.35)))));
+    data[i*4+1]=Math.round(255*Math.exp(-Math.pow(d/(effectSettings.haloRadius*.6),2)));
+    data[i*4+3]=255;
+  }
+  const texture=new THREE.DataTexture(data,w,h); texture.flipY=true;
+  texture.minFilter=texture.magFilter=THREE.LinearFilter; texture.needsUpdate=true;
+  fields.set(mask,texture); return texture;
+}
+
 export function createMetalMaterial(mask, original, preview = false) {
   return new THREE.ShaderMaterial({
     transparent: !preview, depthWrite: false, depthTest: false, toneMapped: false,
     uniforms: {
-      uMask: { value: mask }, uOriginal: { value: original },
+      uMask: { value: lightField(mask) }, uOriginal: { value: original },
       uPreview: { value: preview ? 1 : 0 }, uTime: { value: 0 },
       uDuration: { value: effectSettings.duration }, uRest: { value: effectSettings.rest },
       uIntensity: { value: effectSettings.intensity }, uBand: { value: effectSettings.bandWidth },
@@ -31,7 +72,7 @@ export function createMetalMaterial(mask, original, preview = false) {
       uniform vec3 uMetal,uHighlight;
       float trace(vec2 p) {
         vec4 m=texture2D(uMask,p);
-        return m.a * smoothstep(0.1,0.45, min(m.r,m.b)-m.g);
+        return m.r;
       }
       void main(){
         float lap=mod(uTime,uDuration+uRest);
@@ -43,26 +84,13 @@ export function createMetalMaterial(mask, original, preview = false) {
         float head=exp(-pow(d/(uBand*0.17),2.0));
         float wake=exp(-pow(d/(uBand*0.64),2.0))* (1.0-smoothstep(0.0,uBand*0.28,d));
         float envelope=max(head,wake*0.38)*moving;
-        // Engrosar las trazas sin mover su recorrido.
-// Radio en píxeles del PNG: aumentar para más grosor.
-float thickness = 6.0;
-float m = 0.0;
-
-for (int y = -4; y <= 4; y++) {
-  for (int x = -4; x <= 4; x++) {
-    vec2 offset = vec2(float(x), float(y));
-    if (dot(offset, offset) <= 16.0) {
-      m = max(m, trace(
-        vUv + offset * (thickness / 4.0) * uTexel
-      ));
-        // A small local halo comes only from neighboring trace pixels.
-        vec2 px=uTexel*2.5;
-        float halo=(trace(vUv+vec2(px.x,0.0))+trace(vUv-vec2(px.x,0.0))+
-          trace(vUv+vec2(0.0,px.y))+trace(vUv-vec2(0.0,px.y)))*0.25;
+        vec2 field=texture2D(uMask,vUv).rg;
+        float m=field.r;
+        float halo=field.g;
         float grain=0.86+0.14*sin(vUv.x*1100.0+vUv.y*340.0+uTime*1.7);
         float glint=pow(0.5+0.5*sin(vUv.x*97.0-vUv.y*23.0-uTime*2.0),10.0);
         vec3 metal=mix(uMetal,uHighlight,clamp(head*0.85+glint*0.22,0.0,1.0));
-        float alpha=clamp((m*grain+halo*0.2)*envelope*uIntensity,0.0,1.0);
+        float alpha=clamp((m*grain*1.4+halo*0.65)*envelope*uIntensity,0.0,1.0);
         if(uPreview>0.5){
           vec3 base=texture2D(uOriginal,vUv).rgb;
           gl_FragColor=vec4(mix(base,metal,alpha),1.0);
