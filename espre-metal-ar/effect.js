@@ -43,7 +43,18 @@ export function createMetalMaterial(mask, original, preview = false) {
         float head=exp(-pow(d/(uBand*0.17),2.0));
         float wake=exp(-pow(d/(uBand*0.64),2.0))* (1.0-smoothstep(0.0,uBand*0.28,d));
         float envelope=max(head,wake*0.38)*moving;
-        float m=trace(vUv);
+        // Engrosar las trazas sin mover su recorrido.
+// Radio en píxeles del PNG: aumentar para más grosor.
+float thickness = 6.0;
+float m = 0.0;
+
+for (int y = -4; y <= 4; y++) {
+  for (int x = -4; x <= 4; x++) {
+    vec2 offset = vec2(float(x), float(y));
+    if (dot(offset, offset) <= 16.0) {
+      m = max(m, trace(
+        vUv + offset * (thickness / 4.0) * uTexel
+      ));
         // A small local halo comes only from neighboring trace pixels.
         vec2 px=uTexel*2.5;
         float halo=(trace(vUv+vec2(px.x,0.0))+trace(vUv-vec2(px.x,0.0))+
