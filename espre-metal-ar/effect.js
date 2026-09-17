@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 // The magenta PNG is a raster path mask, never a visible colored layer.
 export const effectSettings = { duration: 6, rest: 1.2, intensity: 0.8, bandWidth: 0.24,
-  traceRadius: 24, haloRadius: 17 }; // Radii in original PNG pixels.
+  traceRadius: 10, haloRadius: 5 }; // Radii in original PNG pixels.
 export const finishes = {
   gold: { color: '#efc45d', highlight: '#fff7d9' },
   silver: { color: '#9cbbd2', highlight: '#f4fcff' },
